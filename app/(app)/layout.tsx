@@ -14,7 +14,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <OnboardingGuard>
               <div className="flex min-h-screen flex-row bg-[#F7F4EC] text-[#14231B]">
                 <Sidebar />
-                <main className="flex min-w-0 flex-1 flex-col pb-16 lg:pb-0">
+                <main className="flex min-w-0 flex-1 flex-col pb-[calc(4.5rem+env(safe-area-inset-bottom))] lg:pb-0">
                   {children}
                 </main>
                 <MobileBottomNav />

@@ -11,6 +11,7 @@ import {
   ErrorState,
   ChartSkeleton,
 } from "@/components/shared/DataStates";
+import { Wallet, Pencil, Trash2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -40,19 +41,14 @@ import {
   AlertDialogAction,
 } from "@/components/ui/alert-dialog";
 import { RecurringBillsSection } from "@/components/budgets/RecurringBillsSection";
-
-const tblGrid =
-  "grid-cols-[minmax(140px,1.3fr)_130px_minmax(120px,1fr)_100px_50px]";
+import {
+  BudgetOverallBar,
+  BudgetProgressBar,
+} from "@/components/budgets/BudgetProgressBar";
+import { formatPKR } from "@/lib/i18n/format";
 
 function pkr(n: number) {
-  return `Rs. ${n.toLocaleString()}`;
-}
-
-function getBarColor(pct: number): string {
-  if (pct >= 100) return "#B3261E";
-  if (pct >= 80) return "#C4622D";
-  if (pct >= 60) return "#D8A72A";
-  return "#22B07D";
+  return formatPKR(n);
 }
 
 function getFirstOfMonth(): number {
@@ -77,11 +73,12 @@ export default function BudgetsPage() {
   } = useBudgets();
   const { categories } = useCategories();
   const { addToast } = useToast();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const getCategoryName = (catId: string): string => {
     const cat = categories.find((c) => c.id === catId || c.name === catId);
-    return cat?.nameUr ?? catId;
+    if (!cat) return catId;
+    return language === "ur" ? cat.nameUr : cat.name;
   };
 
   const totalLimit = budget?.totalLimit ?? 0;
@@ -236,7 +233,7 @@ export default function BudgetsPage() {
       {!loading && !error && !hasBudget && (
         <div className="px-6 pb-12 pt-6 sm:px-10">
           <EmptyState
-            icon="📊"
+            icon={Wallet}
             title={t("budgets.emptyTitle")}
             description={t("budgets.emptyDesc")}
             actionLabel={t("budgets.create")}
@@ -288,23 +285,16 @@ export default function BudgetsPage() {
                     {overallPct}%
                   </span>
                 </div>
-                <span className="text-[14px] text-[#6B7A70]">
-                  {pkr(Math.max(totalLimit - totalSpent, 0))}{" "}
-                  {t("budgets.remaining")}
+                <span className="text-end text-[14px] text-[#6B7A70]">
+                  <span className="block text-[12px]">
+                    {t("budgets.remaining")}
+                  </span>
+                  <span className="font-[var(--font-manrope)] text-[20px] font-bold text-[#14231B]">
+                    {pkr(Math.max(totalLimit - totalSpent, 0))}
+                  </span>
                 </span>
               </div>
-              <div className="h-[14px] overflow-hidden rounded-full bg-[#EDEAE0]">
-                <div
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${Math.min(overallPct, 100)}%`,
-                    background:
-                      overallPct >= 80
-                        ? "linear-gradient(90deg,#C4622D,#B3261E)"
-                        : "linear-gradient(90deg,#0F5132,#22B07D)",
-                  }}
-                />
-              </div>
+              <BudgetOverallBar spent={totalSpent} limit={totalLimit} />
               <div className="flex flex-wrap gap-[18px] text-[13px] text-[#6B7A70]">
                 {[
                   { c: "#22B07D", l: t("budgets.legendSafe") },
@@ -323,210 +313,53 @@ export default function BudgetsPage() {
               </div>
             </div>
 
-            {/* Category table */}
-            <div className="overflow-x-auto rounded-2xl border border-[#E7E2D6] bg-white">
-              <div
-                className={`hidden min-w-[700px] ${tblGrid} grid gap-3.5 border-b border-[#E7E2D6] bg-[#FBF9F4] px-5 py-3.5 font-[var(--font-manrope)] text-[11px] tracking-[.12em] text-[#8A9690] md:grid`}
-              >
-                <span>{t("budgets.colCategory")}</span>
-                <span>{t("budgets.colLimit")}</span>
-                <span>{t("budgets.colUtilization")}</span>
-                <span>{t("budgets.colRemaining")}</span>
-                <span></span>
-              </div>
-              {budgetCategories.map((row, i) => {
-                const pct =
-                  row.limit > 0 ? Math.round((row.spent / row.limit) * 100) : 0;
-                const barColor = getBarColor(pct);
-                const remaining = Math.max(row.limit - row.spent, 0);
-                return (
-                  <div key={row.id}>
-                    {/* Desktop row */}
-                    <div
-                      className={`hidden min-w-[700px] ${tblGrid} grid items-center gap-3.5 px-5 py-4 md:grid ${i < budgetCategories.length - 1 ? "border-b border-[#F4F1E8]" : ""}`}
-                    >
-                      <span className="text-[15px]">
-                        {getCategoryName(row.categoryId)}
-                      </span>
-                      <span className="font-[var(--font-manrope)] text-[14px]">
-                        {pkr(row.limit)}
-                      </span>
-                      <div className="flex flex-col gap-1.5">
-                        <span
-                          className="font-[var(--font-manrope)] text-[12px]"
-                          style={{ color: barColor }}
-                        >
-                          {pct}% · {pkr(row.spent)}
-                        </span>
-                        <div className="h-2 overflow-hidden rounded-full bg-[#EDEAE0]">
-                          <div
-                            className="h-full rounded-full"
-                            style={{
-                              width: `${Math.min(pct, 100)}%`,
-                              background: barColor,
-                            }}
-                          />
-                        </div>
-                      </div>
-                      <span
-                        className="font-[var(--font-manrope)] text-[14px]"
-                        style={
-                          remaining === 0 ? { color: "#B3261E" } : undefined
+            {/* Category progress cards */}
+            <div className="flex flex-col gap-3">
+              {budgetCategories.map((row) => (
+                <BudgetProgressBar
+                  key={row.id}
+                  name={
+                    language === "ur" ? row.categoryNameUr : row.categoryName
+                  }
+                  icon={row.categoryIcon}
+                  spent={row.spent}
+                  limit={row.limit}
+                  actions={
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openEditCategory({
+                            categoryId: row.categoryId,
+                            limit: row.limit,
+                          })
                         }
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-[10px] border border-[#E7E2D6] bg-white px-3 text-[13px] font-medium text-[#0F5132] transition-colors hover:border-[#0F5132] hover:bg-[#E6EFE9]"
                       >
-                        {pkr(remaining)}
-                      </span>
-                      <div className="flex gap-1.5">
-                        <button
-                          onClick={() =>
-                            openEditCategory({
-                              categoryId: row.categoryId,
-                              limit: row.limit,
-                            })
-                          }
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#E7E2D6] text-[#0F5132] transition-colors hover:border-[#0F5132] hover:bg-[#E6EFE9]"
-                          aria-label={t("common.edit")}
-                          title={t("common.edit")}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                            <path d="m15 5 4 4" />
-                          </svg>
-                        </button>
-                        <button
-                          onClick={() => {
-                            setDeleteCatTarget({
-                              categoryId: row.categoryId,
-                              name: getCategoryName(row.categoryId),
-                            });
-                            setDeleteCatOpen(true);
-                          }}
-                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#E7E2D6] text-[#B3261E] transition-colors hover:border-[#B3261E] hover:bg-[#FDE8E8]"
-                          aria-label={t("common.delete")}
-                          title={t("common.delete")}
-                        >
-                          <svg
-                            xmlns="http://www.w3.org/2000/svg"
-                            width="14"
-                            height="14"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                          >
-                            <path d="M3 6h18" />
-                            <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                            <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                            <line x1="10" x2="10" y1="11" y2="17" />
-                            <line x1="14" x2="14" y1="11" y2="17" />
-                          </svg>
-                        </button>
-                      </div>
-                    </div>
-                    {/* Mobile card */}
-                    <div
-                      className={`px-4 py-3 md:hidden ${i < budgetCategories.length - 1 ? "border-b border-[#F4F1E8]" : ""}`}
-                    >
-                      <div className="flex items-center justify-between text-[14px]">
-                        <span className="font-medium">
-                          {getCategoryName(row.categoryId)}
-                        </span>
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="font-[var(--font-manrope)] text-[12px]"
-                            style={{ color: barColor }}
-                          >
-                            {pct}%
-                          </span>
-                          <button
-                            onClick={() =>
-                              openEditCategory({
-                                categoryId: row.categoryId,
-                                limit: row.limit,
-                              })
-                            }
-                            className="inline-flex items-center gap-1 rounded-md border border-[#E7E2D6] px-2 py-1 text-[11px] text-[#0F5132] transition-colors hover:border-[#0F5132] hover:bg-[#E6EFE9]"
-                            aria-label={t("common.edit")}
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="10"
-                              height="10"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
-                              <path d="m15 5 4 4" />
-                            </svg>
-                            {t("common.edit")}
-                          </button>
-                          <button
-                            onClick={() => {
-                              setDeleteCatTarget({
-                                categoryId: row.categoryId,
-                                name: getCategoryName(row.categoryId),
-                              });
-                              setDeleteCatOpen(true);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-md border border-[#E7E2D6] px-2 py-1 text-[11px] text-[#B3261E] transition-colors hover:border-[#B3261E] hover:bg-[#FDE8E8]"
-                            aria-label={t("common.delete")}
-                          >
-                            <svg
-                              xmlns="http://www.w3.org/2000/svg"
-                              width="10"
-                              height="10"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M3 6h18" />
-                              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                            </svg>
-                            {t("common.delete")}
-                          </button>
-                        </div>
-                      </div>
-                      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[#EDEAE0]">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${Math.min(pct, 100)}%`,
-                            background: barColor,
-                          }}
-                        />
-                      </div>
-                      <div className="mt-1 flex justify-between text-[12px] text-[#6B7A70]">
-                        <span>
-                          {t("budgets.limitLabel")}: {pkr(row.limit)}
-                        </span>
-                        <span>
-                          {t("budgets.remainingLabel")}: {pkr(remaining)}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
+                        <Pencil className="h-3.5 w-3.5" aria-hidden />
+                        {t("common.edit")}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setDeleteCatTarget({
+                            categoryId: row.categoryId,
+                            name:
+                              language === "ur"
+                                ? row.categoryNameUr
+                                : row.categoryName,
+                          });
+                          setDeleteCatOpen(true);
+                        }}
+                        className="inline-flex min-h-10 items-center gap-1.5 rounded-[10px] border border-[#E7E2D6] bg-white px-3 text-[13px] font-medium text-[#B3261E] transition-colors hover:border-[#B3261E] hover:bg-[#FDE8E8]"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        {t("common.delete")}
+                      </button>
+                    </>
+                  }
+                />
+              ))}
             </div>
           </div>
 

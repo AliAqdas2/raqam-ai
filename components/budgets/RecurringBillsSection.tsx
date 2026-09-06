@@ -193,9 +193,11 @@ export function RecurringBillsSection() {
         <ListSkeleton rows={3} />
       ) : items.length === 0 ? (
         <EmptyState
-          icon="🔁"
+          icon={Repeat2}
           title={t("recurring.empty")}
           description={t("recurring.emptyDesc")}
+          actionLabel={t("recurring.add")}
+          onAction={openAdd}
         />
       ) : (
         <div className="flex flex-col divide-y divide-[#F4F1E8]">

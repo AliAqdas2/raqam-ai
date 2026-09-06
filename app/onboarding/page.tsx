@@ -3,19 +3,24 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "convex/react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { api } from "@/convex/_generated/api";
 import { useLanguage } from "@/components/LanguageProvider";
+import { StatefulButton } from "@/components/ui/stateful-button";
+import { StepHeader } from "@/components/onboarding/StepHeader";
+import type { TranslationKey } from "@/lib/i18n/ur";
 
-// ─── Styling shorthands (warm-ledger vocabulary, matches the app forms) ─────────
 const inputCls =
-  "h-11 w-full rounded-[10px] border border-[#DCD6C8] bg-[#FBF9F4] px-3.5 font-[var(--font-manrope)] text-[16px] font-semibold text-[#14231B] placeholder:font-normal placeholder:text-[#9BA79F] focus-visible:border-[#0F5132] focus-visible:ring-2 focus-visible:ring-[#0F5132]/20 focus-visible:outline-none";
-const primaryBtn =
-  "rounded-[10px] bg-[#0F5132] px-6 py-2.5 text-[14px] font-medium text-white transition-colors hover:bg-[#14231B] disabled:opacity-50";
-const ghostBtn =
-  "rounded-[10px] px-4 py-2.5 text-[14px] font-medium text-[#6B7A70] transition-colors hover:bg-[#F1EEE4] disabled:opacity-50";
+  "h-12 w-full rounded-[12px] border border-[#DCD6C8] bg-[#FBF9F4] px-3.5 font-[var(--font-manrope)] text-[16px] font-semibold text-[#14231B] placeholder:font-normal placeholder:text-[#9BA79F] focus-visible:border-[#0F5132] focus-visible:ring-2 focus-visible:ring-[#0F5132]/20 focus-visible:outline-none";
 
 const BUDGET_SLUGS = ["food", "transportation", "utilities"] as const;
 const TOTAL_STEPS = 3;
+
+const STEP_PROGRESS_KEYS: TranslationKey[] = [
+  "onboarding.step.1",
+  "onboarding.step.2",
+  "onboarding.step.3",
+];
 
 function firstOfMonth(): number {
   const n = new Date();
@@ -33,6 +38,8 @@ function parseAmount(raw: string): number {
 export default function OnboardingPage() {
   const router = useRouter();
   const { t, dir } = useLanguage();
+  const reduceMotion = useReducedMotion();
+  const rtl = dir === "rtl";
 
   const user = useQuery(api.users.getCurrentUser);
   const categories = useQuery(api.categories.list);
@@ -45,10 +52,9 @@ export default function OnboardingPage() {
   const [step, setStep] = React.useState(0);
   const [income, setIncome] = React.useState("");
   const [limits, setLimits] = React.useState<Record<string, string>>({});
-  const [busy, setBusy] = React.useState(false);
+  const [navBusy, setNavBusy] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
 
-  // Already onboarded (or a re-visit) → straight to the dashboard.
   React.useEffect(() => {
     if (user && user.onboardingCompletedAt != null) {
       router.replace("/dashboard");
@@ -64,25 +70,42 @@ export default function OnboardingPage() {
     [categories],
   );
 
-  const finish = React.useCallback(
-    async (dest: "/dashboard" | "/assistant") => {
-      setBusy(true);
-      try {
-        await completeOnboarding({});
-        router.replace(dest);
-      } catch {
-        setError(t("onboarding.error"));
-        setBusy(false);
-      }
-    },
-    [completeOnboarding, router, t],
-  );
+  const goDashboard = React.useCallback(async () => {
+    setError(null);
+    try {
+      await completeOnboarding({});
+      router.replace("/dashboard");
+    } catch {
+      setError(t("onboarding.error"));
+      throw new Error("onboarding skip failed");
+    }
+  }, [completeOnboarding, router, t]);
+
+  const skip = React.useCallback(async () => {
+    setNavBusy(true);
+    try {
+      await goDashboard();
+    } catch {
+      setNavBusy(false);
+    }
+  }, [goDashboard]);
+
+  const finishToAssistant = React.useCallback(async () => {
+    setError(null);
+    const draft = t("onboarding.s3.example1");
+    try {
+      await completeOnboarding({});
+      router.replace(`/assistant?draft=${encodeURIComponent(draft)}`);
+    } catch {
+      setError(t("onboarding.error"));
+      throw new Error("onboarding finish failed");
+    }
+  }, [completeOnboarding, router, t]);
 
   const submitIncome = React.useCallback(async () => {
     const amount = parseAmount(income);
     const salaryId = catId("salary");
     if (amount > 0 && salaryId) {
-      setBusy(true);
       setError(null);
       try {
         await createTransaction({
@@ -95,12 +118,9 @@ export default function OnboardingPage() {
         });
       } catch {
         setError(t("onboarding.error"));
-        setBusy(false);
-        return;
+        throw new Error("onboarding income failed");
       }
-      setBusy(false);
     }
-    setStep(1);
   }, [income, catId, createTransaction, t]);
 
   const submitBudget = React.useCallback(async () => {
@@ -110,7 +130,6 @@ export default function OnboardingPage() {
     })).filter((r) => r.limit > 0);
 
     if (filled.length > 0) {
-      setBusy(true);
       setError(null);
       try {
         let budgetId = currentBudget?._id as string | undefined;
@@ -129,13 +148,12 @@ export default function OnboardingPage() {
         }
       } catch {
         setError(t("onboarding.error"));
-        setBusy(false);
-        return;
+        throw new Error("onboarding budget failed");
       }
-      setBusy(false);
     }
-    setStep(2);
   }, [limits, currentBudget, createBudget, upsertBudgetCategory, catId, t]);
+
+  const slideX = reduceMotion ? 0 : rtl ? 28 : -28;
 
   if (user === undefined) {
     return (
@@ -144,9 +162,8 @@ export default function OnboardingPage() {
   }
 
   return (
-    <div dir={dir} className="w-full max-w-[460px]">
-      {/* Mark + welcome */}
-      <div className="mb-6 flex flex-col items-center gap-2 text-center">
+    <div dir={dir} className="flex w-full max-w-[460px] flex-col">
+      <div className="mb-5 flex flex-col items-center gap-2 text-center">
         <div className="grid h-[42px] w-[42px] place-items-center rounded-[12px] bg-[#E8B931] pb-1 font-[var(--font-noto-nastaliq-urdu)] text-[21px] font-bold text-[#0B3B26]">
           ر
         </div>
@@ -155,146 +172,179 @@ export default function OnboardingPage() {
         </p>
       </div>
 
-      {/* Progress dots */}
-      <div className="mb-5 flex items-center justify-center gap-2">
-        {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-          <span
-            key={i}
-            className={`h-1.5 rounded-full transition-all ${
-              i === step
-                ? "w-6 bg-[#0F5132]"
-                : i < step
-                  ? "w-1.5 bg-[#0F5132]"
-                  : "w-1.5 bg-[#DCD6C8]"
-            }`}
-          />
-        ))}
-      </div>
+      <StepHeader
+        step={step}
+        totalSteps={TOTAL_STEPS}
+        progressLabel={t(STEP_PROGRESS_KEYS[step]!)}
+      />
 
-      <div className="rounded-2xl border border-[#E7E2D6] bg-white px-6 py-6 shadow-sm">
-        {step === 0 && (
-          <StepShell
-            title={t("onboarding.s1.title")}
-            desc={t("onboarding.s1.desc")}
-          >
-            <label className="mb-1.5 block text-[13px] text-[#4C5A52]">
-              {t("onboarding.s1.label")}
-            </label>
-            <input
-              inputMode="numeric"
-              autoFocus
-              value={income}
-              onChange={(e) => setIncome(e.target.value)}
-              placeholder="85,000"
-              className={inputCls}
-            />
-          </StepShell>
-        )}
-
-        {step === 1 && (
-          <StepShell
-            title={t("onboarding.s2.title")}
-            desc={t("onboarding.s2.desc")}
-          >
-            <div className="flex flex-col gap-3">
-              {BUDGET_SLUGS.map((slug) => (
-                <div key={slug} className="flex items-center gap-3">
-                  <span className="w-24 shrink-0 text-[14px] text-[#4C5A52]">
-                    {catLabel(slug)}
-                  </span>
+      <div className="overflow-hidden rounded-2xl border border-[#E7E2D6] bg-white shadow-sm">
+        <div className="min-h-[280px] px-6 py-6">
+          <AnimatePresence mode="wait" initial={false}>
+            <motion.div
+              key={step}
+              initial={
+                reduceMotion ? false : { opacity: 0, x: slideX }
+              }
+              animate={{ opacity: 1, x: 0 }}
+              exit={
+                reduceMotion
+                  ? undefined
+                  : { opacity: 0, x: rtl ? -28 : 28 }
+              }
+              transition={{ duration: 0.22, ease: "easeOut" }}
+            >
+              {step === 0 && (
+                <StepShell
+                  title={t("onboarding.s1.title")}
+                  desc={t("onboarding.s1.desc")}
+                >
+                  <label className="mb-1.5 block text-[13px] font-medium text-[#4C5A52]">
+                    {t("onboarding.s1.label")}
+                  </label>
                   <input
                     inputMode="numeric"
-                    value={limits[slug] ?? ""}
-                    onChange={(e) =>
-                      setLimits((p) => ({ ...p, [slug]: e.target.value }))
-                    }
-                    placeholder="Rs. —"
-                    className={`${inputCls} h-10 text-[14px]`}
+                    autoFocus
+                    value={income}
+                    onChange={(e) => setIncome(e.target.value)}
+                    placeholder={t("onboarding.s1.placeholder")}
+                    className={inputCls}
+                    aria-describedby="onboarding-s1-hint"
                   />
-                </div>
-              ))}
-            </div>
-          </StepShell>
-        )}
+                  <p
+                    id="onboarding-s1-hint"
+                    className="mt-2 text-[13px] leading-[1.8] text-[#6B7A70]"
+                  >
+                    {t("onboarding.s1.hint")}
+                  </p>
+                </StepShell>
+              )}
 
-        {step === 2 && (
-          <StepShell
-            title={t("onboarding.s3.title")}
-            desc={t("onboarding.s3.desc")}
-          >
-            <ul className="flex flex-col gap-2">
-              {[
-                t("onboarding.s3.example1"),
-                t("onboarding.s3.example2"),
-                t("onboarding.s3.example3"),
-              ].map((ex) => (
-                <li
-                  key={ex}
-                  className="rounded-[10px] border border-[#E6EFE9] bg-[#F4F8F5] px-3.5 py-2.5 font-reading text-[14px] leading-[1.9] text-[#4C5A52]"
+              {step === 1 && (
+                <StepShell
+                  title={t("onboarding.s2.title")}
+                  desc={t("onboarding.s2.desc")}
                 >
-                  {ex}
-                </li>
-              ))}
-            </ul>
-          </StepShell>
-        )}
+                  <div className="flex flex-col gap-3">
+                    {BUDGET_SLUGS.map((slug) => (
+                      <div key={slug} className="flex items-center gap-3">
+                        <span className="w-24 shrink-0 text-[14px] text-[#4C5A52]">
+                          {catLabel(slug)}
+                        </span>
+                        <input
+                          inputMode="numeric"
+                          value={limits[slug] ?? ""}
+                          onChange={(e) =>
+                            setLimits((p) => ({
+                              ...p,
+                              [slug]: e.target.value,
+                            }))
+                          }
+                          placeholder={t("onboarding.s2.placeholder")}
+                          className={`${inputCls} h-11 text-[15px]`}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-[13px] leading-[1.8] text-[#6B7A70]">
+                    {t("onboarding.s2.hint")}
+                  </p>
+                </StepShell>
+              )}
 
-        {error && (
-          <p className="mt-3 text-[13px] text-[#B3261E]" role="alert">
-            {error}
-          </p>
-        )}
+              {step === 2 && (
+                <StepShell
+                  title={t("onboarding.s3.title")}
+                  desc={t("onboarding.s3.desc")}
+                >
+                  <ul className="flex flex-col gap-2">
+                    {[
+                      t("onboarding.s3.example1"),
+                      t("onboarding.s3.example2"),
+                      t("onboarding.s3.example3"),
+                    ].map((ex, i) => (
+                      <li
+                        key={ex}
+                        className={
+                          i === 0
+                            ? "rounded-[12px] border border-[#0F5132]/35 bg-[#F4F8F5] px-3.5 py-3 font-reading text-[14px] leading-[1.9] text-[#0F5132]"
+                            : "rounded-[12px] border border-[#E6EFE9] bg-[#FBF9F4] px-3.5 py-3 font-reading text-[14px] leading-[1.9] text-[#4C5A52]"
+                        }
+                      >
+                        {ex}
+                        {i === 0 ? (
+                          <span className="mt-1 block text-[12px] font-normal text-[#6B7A70]">
+                            {t("onboarding.s3.chipHint")}
+                          </span>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                </StepShell>
+              )}
+            </motion.div>
+          </AnimatePresence>
 
-        {/* Controls */}
-        <div className="mt-6 flex items-center justify-between">
-          <button
-            type="button"
-            className={ghostBtn}
-            disabled={busy}
-            onClick={() => (step === 0 ? finish("/dashboard") : setStep(step - 1))}
-          >
-            {step === 0 ? t("onboarding.skip") : t("onboarding.back")}
-          </button>
+          {error ? (
+            <p className="mt-3 text-[13px] text-[#B3261E]" role="alert">
+              {error}
+            </p>
+          ) : null}
+        </div>
+
+        {/* Bottom bar — one primary CTA; secondary is text-only */}
+        <div className="flex items-center justify-between gap-3 border-t border-[#E7E2D6] bg-[#FBF9F4] px-5 py-4">
+          {step === 0 ? (
+            <button
+              type="button"
+              disabled={navBusy}
+              onClick={() => void skip()}
+              className="min-h-12 px-2 text-[14px] font-medium text-[#6B7A70] underline-offset-4 hover:underline disabled:opacity-50"
+            >
+              {t("onboarding.skip")}
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={navBusy}
+              onClick={() => setStep(step - 1)}
+              className="min-h-12 px-2 text-[14px] font-medium text-[#6B7A70] underline-offset-4 hover:underline disabled:opacity-50"
+            >
+              {t("onboarding.back")}
+            </button>
+          )}
 
           {step === 0 && (
-            <button
-              type="button"
-              className={primaryBtn}
-              disabled={busy}
+            <StatefulButton
               onClick={submitIncome}
+              loadingLabel={t("onboarding.nextLoading")}
+              successLabel={t("onboarding.nextDone")}
+              onSuccessSettle={() => setStep(1)}
+              className="min-w-[8.5rem] px-6 text-[15px]"
             >
               {t("onboarding.next")}
-            </button>
+            </StatefulButton>
           )}
           {step === 1 && (
-            <button
-              type="button"
-              className={primaryBtn}
-              disabled={busy}
+            <StatefulButton
               onClick={submitBudget}
+              loadingLabel={t("onboarding.nextLoading")}
+              successLabel={t("onboarding.nextDone")}
+              onSuccessSettle={() => setStep(2)}
+              className="min-w-[8.5rem] px-6 text-[15px]"
             >
               {t("onboarding.next")}
-            </button>
+            </StatefulButton>
           )}
           {step === 2 && (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                className={ghostBtn}
-                disabled={busy}
-                onClick={() => finish("/dashboard")}
-              >
-                {t("onboarding.finish")}
-              </button>
-              <button
-                type="button"
-                className={primaryBtn}
-                disabled={busy}
-                onClick={() => finish("/assistant")}
-              >
-                {t("onboarding.s3.cta")}
-              </button>
-            </div>
+            <StatefulButton
+              onClick={finishToAssistant}
+              loadingLabel={t("onboarding.finishLoading")}
+              successLabel={t("onboarding.finishDone")}
+              className="min-w-[8.5rem] px-6 text-[15px]"
+            >
+              {t("onboarding.finish")}
+            </StatefulButton>
           )}
         </div>
       </div>

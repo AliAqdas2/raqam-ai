@@ -49,8 +49,8 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast, removeToast }}>
       {children}
-      {/* Toast container */}
-      <div className="fixed bottom-4 left-4 right-4 z-50 flex flex-col items-center gap-2 sm:left-auto sm:right-6 sm:items-end">
+      {/* Above mobile bottom nav on small screens; normal corner on lg+ */}
+      <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom)+0.5rem)] left-4 right-4 z-[45] flex flex-col items-center gap-2 lg:bottom-4 sm:left-auto sm:right-6 sm:items-end lg:z-50">
         {toasts.map((toast) => (
           <ToastItem
             key={toast.id}

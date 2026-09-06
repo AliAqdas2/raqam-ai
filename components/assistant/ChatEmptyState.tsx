@@ -21,8 +21,11 @@ const SUGGESTIONS: TranslationKey[] = [
 
 export function ChatEmptyState({
   onSelect,
+  highlightText,
 }: {
   onSelect: (text: string) => void;
+  /** Prefills/highlights matching suggestion (e.g. from onboarding) */
+  highlightText?: string;
 }) {
   const { t } = useLanguage();
 
@@ -78,21 +81,30 @@ export function ChatEmptyState({
         animate={{ opacity: 1 }}
         transition={{ delay: 0.2, duration: 0.4 }}
       >
-        {SUGGESTIONS.map((key, i) => (
-          <motion.button
-            key={key}
-            type="button"
-            onClick={() => onSelect(t(key))}
-            className="group flex items-center justify-between gap-3 rounded-[14px] border border-border bg-card px-4 py-3.5 text-start text-[14px] transition-colors hover:border-primary/30 hover:bg-accent"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.25 + i * 0.05 }}
-            whileHover={{ y: -2 }}
-          >
-            <span className="min-w-0">{t(key)}</span>
-            <ArrowUpLeft className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
-          </motion.button>
-        ))}
+        {SUGGESTIONS.map((key, i) => {
+          const label = t(key);
+          const highlighted =
+            Boolean(highlightText) && highlightText === label;
+          return (
+            <motion.button
+              key={key}
+              type="button"
+              onClick={() => onSelect(label)}
+              className={
+                highlighted
+                  ? "group flex min-h-12 items-center justify-between gap-3 rounded-[14px] border border-[#0F5132]/40 bg-[#F4F8F5] px-4 py-3.5 text-start text-[14px] ring-2 ring-[#0F5132]/15 transition-colors"
+                  : "group flex min-h-12 items-center justify-between gap-3 rounded-[14px] border border-border bg-card px-4 py-3.5 text-start text-[14px] transition-colors hover:border-primary/30 hover:bg-accent"
+              }
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.25 + i * 0.05 }}
+              whileHover={{ y: -2 }}
+            >
+              <span className="min-w-0">{label}</span>
+              <ArrowUpLeft className="h-4 w-4 shrink-0 text-muted-foreground transition-colors group-hover:text-primary" />
+            </motion.button>
+          );
+        })}
       </motion.div>
     </div>
   );

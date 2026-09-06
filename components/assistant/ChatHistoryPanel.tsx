@@ -94,7 +94,7 @@ export function ChatHistoryPanel({
     <div className="flex h-full flex-col">
       {/* Header + New Chat button */}
       <div className="flex flex-col gap-3 px-4 pb-3 pt-4">
-        <span className="font-[var(--font-manrope)] text-[11px] tracking-[.16em] text-[#8A9690]">
+        <span className="text-[13px] font-medium text-[#6B7A70]">
           {t("assistant.chatHistory")}
         </span>
         <button
@@ -121,7 +121,7 @@ export function ChatHistoryPanel({
 
           return (
             <div key={group} className="flex flex-col gap-0.5">
-              <span className="px-3 py-2 font-[var(--font-manrope)] text-[10px] tracking-[.14em] text-[#8A9690]">
+              <span className="px-3 py-2 text-[12px] font-medium text-[#8A9690]">
                 {sectionLabels[group]}
               </span>
               {items.map((conv) => {

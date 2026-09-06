@@ -1,7 +1,10 @@
 "use client";
 
 import * as React from "react";
+import { motion, useReducedMotion } from "framer-motion";
+import { AlertCircle, type LucideIcon } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
+import { cn } from "@/lib/utils";
 
 // ─── Loading Skeleton ────────────────────────────────────────────────────────────
 
@@ -122,34 +125,63 @@ export function PageSkeleton() {
 interface EmptyStateProps {
   title: string;
   description: string;
-  actionLabel?: string;
-  onAction?: () => void;
-  icon?: string;
+  /** Required — dead CTAs confuse low-literacy users */
+  actionLabel: string;
+  onAction: () => void;
+  icon: LucideIcon;
+  className?: string;
 }
 
+/**
+ * One question + one green CTA. Lucide icon in a soft green circle (no emoji).
+ * Pattern inspired by shadcn/Aceternity Empty blocks, restyled for warm-ledger.
+ */
 export function EmptyState({
   title,
   description,
   actionLabel,
   onAction,
-  icon = "📋",
+  icon: Icon,
+  className,
 }: EmptyStateProps) {
-  return (
-    <div className="flex flex-col items-center gap-4 rounded-2xl border border-dashed border-[#CBD9CF] bg-white px-6 py-12 text-center">
-      <span className="text-[40px]">{icon}</span>
-      <h3 className="text-[18px] font-bold">{title}</h3>
-      <p className="max-w-sm text-[14px] leading-[2] text-[#6B7A70]">
-        {description}
-      </p>
-      {actionLabel && onAction && (
-        <button
-          onClick={onAction}
-          className="rounded-[10px] border-0 bg-[#0F5132] px-5 py-2.5 text-[14px] text-white hover:bg-[#14231B]"
-        >
-          {actionLabel}
-        </button>
+  const reduceMotion = useReducedMotion();
+
+  const body = (
+    <div
+      className={cn(
+        "flex flex-col items-center gap-4 rounded-2xl border border-[#E7E2D6] bg-white px-6 py-12 text-center",
+        className,
       )}
+    >
+      <span className="grid h-16 w-16 place-items-center rounded-full bg-[#E6EFE9] text-[#0F5132]">
+        <Icon className="h-8 w-8" strokeWidth={1.75} aria-hidden />
+      </span>
+      <div className="flex max-w-sm flex-col gap-2">
+        <h3 className="text-[18px] font-bold leading-[1.7] text-[#14231B]">
+          {title}
+        </h3>
+        <p className="text-[14px] leading-[1.9] text-[#6B7A70]">{description}</p>
+      </div>
+      <button
+        type="button"
+        onClick={onAction}
+        className="mt-1 inline-flex min-h-12 min-w-[10rem] items-center justify-center rounded-[12px] bg-[#0F5132] px-6 text-[15px] font-medium text-white outline-none transition-colors hover:bg-[#14231B] focus-visible:ring-2 focus-visible:ring-[#0F5132] focus-visible:ring-offset-2"
+      >
+        {actionLabel}
+      </button>
     </div>
+  );
+
+  if (reduceMotion) return body;
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: "easeOut" }}
+    >
+      {body}
+    </motion.div>
   );
 }
 
@@ -164,19 +196,26 @@ export function ErrorState({ message, onRetry }: ErrorStateProps) {
   const { t } = useLanguage();
   return (
     <div className="flex flex-col items-center gap-4 rounded-2xl border border-[#E7D6D4] bg-white px-6 py-12 text-center">
-      <span className="text-[40px]">⚠️</span>
-      <h3 className="text-[18px] font-bold">{t("common.errorTitle")}</h3>
-      <p className="max-w-sm text-[14px] leading-[2] text-[#6B7A70]">
-        {message ?? t("common.errorDefault")}
-      </p>
-      {onRetry && (
+      <span className="grid h-16 w-16 place-items-center rounded-full bg-[#F6E6E4] text-[#B3261E]">
+        <AlertCircle className="h-8 w-8" strokeWidth={1.75} aria-hidden />
+      </span>
+      <div className="flex max-w-sm flex-col gap-2">
+        <h3 className="text-[18px] font-bold leading-[1.7] text-[#14231B]">
+          {t("common.errorTitle")}
+        </h3>
+        <p className="text-[14px] leading-[1.9] text-[#6B7A70]">
+          {message ?? t("common.errorDefault")}
+        </p>
+      </div>
+      {onRetry ? (
         <button
+          type="button"
           onClick={onRetry}
-          className="rounded-[10px] border-0 bg-[#0F5132] px-5 py-2.5 text-[14px] text-white hover:bg-[#14231B]"
+          className="mt-1 inline-flex min-h-12 min-w-[10rem] items-center justify-center rounded-[12px] bg-[#0F5132] px-6 text-[15px] font-medium text-white outline-none transition-colors hover:bg-[#14231B] focus-visible:ring-2 focus-visible:ring-[#0F5132] focus-visible:ring-offset-2"
         >
           {t("common.retry")}
         </button>
-      )}
+      ) : null}
     </div>
   );
 }

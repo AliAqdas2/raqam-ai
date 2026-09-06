@@ -93,7 +93,7 @@ export function VoiceRecorder({ mode, interimText, onStop }: VoiceRecorderProps)
           <button
             type="button"
             onClick={onStop}
-            className="mt-1 inline-flex items-center gap-2 rounded-full bg-primary px-5 py-2.5 text-[14px] font-medium text-primary-foreground transition-colors hover:bg-[#14231B]"
+            className="mt-1 inline-flex min-h-12 items-center gap-2 rounded-[12px] bg-primary px-6 text-[15px] font-medium text-primary-foreground transition-colors hover:bg-[#14231B]"
           >
             <Square className="h-3.5 w-3.5 fill-current" />
             {t("voice.stop")}

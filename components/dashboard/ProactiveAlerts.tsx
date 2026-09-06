@@ -7,90 +7,57 @@ import {
   CalendarClock,
   TrendingUp,
   Sparkles,
-  X,
 } from "lucide-react";
 import { useLanguage } from "@/components/LanguageProvider";
 import { useToast } from "@/components/shared/Toast";
 import {
   useProactiveAlerts,
   type BillReminder,
+  type BudgetAlert,
+  type UnusualAlert,
 } from "@/hooks/useProactiveAlerts";
 import { useMonthlySummary } from "@/hooks/useMonthlySummary";
 import { useRecurring } from "@/hooks/useRecurring";
+import {
+  StickyBanner,
+  StickyBannerSlot,
+  type StickyBannerTone,
+} from "@/components/ui/sticky-banner";
+import { formatPKR } from "@/lib/i18n/format";
 
-// ─── palette (from app/globals.css design tokens) ──────────────────────────────
+// Priority: budget 100% → budget 80% → unusual → bill → monthly summary
+// Show one at a time; "اگلی خبر" cycles the rest.
 
-const SPINE = {
-  caution: "var(--color-rq-caution)",
-  danger: "var(--color-rq-danger)",
-  info: "var(--color-rq-success)",
-  gold: "var(--color-rq-gold)",
-} as const;
+type QueuedItem =
+  | {
+      kind: "budget";
+      priority: number;
+      key: string;
+      alert: BudgetAlert;
+    }
+  | {
+      kind: "unusual";
+      priority: number;
+      key: string;
+      alert: UnusualAlert;
+    }
+  | {
+      kind: "bill";
+      priority: number;
+      key: string;
+      alert: BillReminder;
+    }
+  | {
+      kind: "summary";
+      priority: number;
+      key: string;
+    };
 
-const CHIP_BG = {
-  caution: "var(--color-rq-alert-bg)",
-  danger: "var(--color-rq-error-bg)",
-  info: "var(--color-rq-info-bg)",
-  gold: "var(--color-rq-chip-bg)",
-} as const;
+const ctaClass =
+  "inline-flex min-h-11 items-center justify-center rounded-[12px] bg-[#0F5132] px-4 text-[14px] font-medium text-white outline-none transition-colors hover:bg-[#14231B] focus-visible:ring-2 focus-visible:ring-[#E8B931] focus-visible:ring-offset-2";
 
-type Tone = keyof typeof SPINE;
-
-function pkr(n: number) {
-  return `Rs. ${Math.round(n).toLocaleString()}`;
-}
-
-// ─── generic card shell ───────────────────────────────────────────────────────
-
-function AlertShell({
-  tone,
-  icon,
-  index,
-  onDismiss,
-  dismissLabel,
-  children,
-}: {
-  tone: Tone;
-  icon: React.ReactNode;
-  index: number;
-  onDismiss?: () => void;
-  dismissLabel: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className="relative overflow-hidden rounded-xl border border-[var(--color-rq-card-border)] bg-[var(--color-rq-card)] animate-in fade-in slide-in-from-top-2 duration-200"
-      style={{ animationDelay: `${index * 60}ms`, animationFillMode: "backwards" }}
-    >
-      <span
-        className="absolute inset-y-0 start-0 w-[3px]"
-        style={{ background: SPINE[tone] }}
-        aria-hidden
-      />
-      <div className="flex items-start gap-3 p-3.5 ps-[18px]">
-        <span
-          className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-[10px]"
-          style={{ background: CHIP_BG[tone], color: SPINE[tone] }}
-        >
-          {icon}
-        </span>
-        <div className="flex min-w-0 flex-1 flex-col gap-1">{children}</div>
-        {onDismiss && (
-          <button
-            onClick={onDismiss}
-            aria-label={dismissLabel}
-            title={dismissLabel}
-            className="-me-1 -mt-1 grid h-7 w-7 shrink-0 place-items-center rounded-md text-[var(--color-rq-text-faint)] transition-colors hover:bg-[var(--color-rq-chip-bg)] hover:text-[var(--color-rq-text-muted)]"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── main ─────────────────────────────────────────────────────────────────────
+const ghostCtaClass =
+  "inline-flex min-h-11 items-center justify-center rounded-[12px] border border-[#DCD6C8] bg-white/70 px-4 text-[14px] font-medium text-[#4C5A52] outline-none transition-colors hover:bg-white focus-visible:ring-2 focus-visible:ring-[#0F5132] focus-visible:ring-offset-2";
 
 export function ProactiveAlerts() {
   const { t, language } = useLanguage();
@@ -101,9 +68,10 @@ export function ProactiveAlerts() {
     useMonthlySummary();
   const { markPaid } = useRecurring();
 
-  // Hide instantly on dismiss; the reactive query catches up a beat later.
   const [hiddenKeys, setHiddenKeys] = React.useState<Set<string>>(new Set());
   const [summaryHidden, setSummaryHidden] = React.useState(false);
+  const [cursor, setCursor] = React.useState(0);
+  const [logExpense, setLogExpense] = React.useState(true);
 
   const hide = React.useCallback(
     (alertKey: string, periodKey: string) => {
@@ -119,346 +87,231 @@ export function ProactiveAlerts() {
     [dismiss],
   );
 
-  const visibleBudget = budgetAlerts.filter((a) => !hiddenKeys.has(a.alertKey));
-  const visibleUnusual = unusualAlerts.filter((a) => !hiddenKeys.has(a.alertKey));
-  const visibleBills = billReminders.filter((a) => !hiddenKeys.has(a.alertKey));
-  const showSummaryCard = showSummary && summary && !summaryHidden;
+  const queue = React.useMemo((): QueuedItem[] => {
+    const items: QueuedItem[] = [];
 
-  const nothingToShow =
-    !showSummaryCard &&
-    visibleBudget.length === 0 &&
-    visibleUnusual.length === 0 &&
-    visibleBills.length === 0;
-
-  if (loading || nothingToShow) return null;
-
-  let i = 0;
-
-  return (
-    <section
-      aria-label={t("proactive.regionLabel")}
-      className="flex flex-col gap-2.5"
-    >
-      <span className="font-[var(--font-manrope)] text-[10px] font-semibold tracking-[.18em] text-[var(--color-rq-text-faint)]">
-        {t("proactive.regionLabel").toUpperCase()}
-      </span>
-
-      {showSummaryCard && (
-        <MonthlySummaryCard
-          index={i++}
-          summary={summary}
-          onDismiss={() => {
-            setSummaryHidden(true);
-            dismissSummary().catch(() => setSummaryHidden(false));
-          }}
-        />
-      )}
-
-      {visibleBills.length > 0 && (
-        <BillReminderCard
-          index={i++}
-          bills={visibleBills}
-          onDismiss={hide}
-          onMarkPaid={async (bill, logExpense) => {
-            hide(bill.alertKey, bill.periodKey);
-            try {
-              await markPaid(bill.recurringId, logExpense);
-              addToast({ type: "success", title: t("recurring.toast.paid") });
-            } catch {
-              addToast({ type: "error", title: t("recurring.toast.error") });
-            }
-          }}
-        />
-      )}
-
-      {visibleUnusual.map((a) => (
-        <AlertShell
-          key={a.alertKey}
-          tone="info"
-          index={i++}
-          icon={<TrendingUp className="h-4 w-4" />}
-          dismissLabel={t("proactive.dismiss")}
-          onDismiss={() => hide(a.alertKey, a.periodKey)}
-        >
-          <span className="text-[14px] font-semibold leading-snug">
-            {t("proactive.unusualTitle")} ·{" "}
-            {language === "ur" ? a.categoryNameUr : a.categoryName}
-          </span>
-          <span className="text-[13px] leading-relaxed text-[var(--color-rq-text-secondary)]">
-            {t("proactive.unusualDetail").replace(
-              "{pct}",
-              String(a.deviationPercent),
-            )}{" "}
-            · <span className="font-[var(--font-manrope)]">{pkr(a.currentSpend)}</span>{" "}
-            <span className="text-[var(--color-rq-text-faint)]">
-              ({t("proactive.unusualAvg")}{" "}
-              <span className="font-[var(--font-manrope)]">{pkr(a.average)}</span>)
-            </span>
-          </span>
-          <Link
-            href="/transactions"
-            className="mt-0.5 w-fit text-[13px] text-[var(--color-rq-cta)] hover:underline"
-          >
-            {t("proactive.viewTxns")}
-          </Link>
-        </AlertShell>
-      ))}
-
-      {visibleBudget.map((a) => {
-        const over = a.severity === "over";
-        return (
-          <AlertShell
-            key={a.alertKey}
-            tone={over ? "danger" : "caution"}
-            index={i++}
-            icon={<TriangleAlert className="h-4 w-4" />}
-            dismissLabel={t("proactive.dismiss")}
-            onDismiss={() => hide(a.alertKey, a.periodKey)}
-          >
-            <span className="text-[14px] font-semibold leading-snug">
-              {over
-                ? t("proactive.budgetOverTitle")
-                : t("proactive.budgetWarnTitle")}{" "}
-              · {language === "ur" ? a.categoryNameUr : a.categoryName}
-            </span>
-            <span className="text-[13px] leading-relaxed text-[var(--color-rq-text-secondary)]">
-              <span className="font-[var(--font-manrope)]" style={{ color: SPINE[over ? "danger" : "caution"] }}>
-                {a.pct}%
-              </span>{" "}
-              · {t("proactive.budgetSpentOf")}{" "}
-              <span className="font-[var(--font-manrope)]">
-                {pkr(a.spent)} / {pkr(a.limit)}
-              </span>
-            </span>
-            <Link
-              href="/budgets"
-              className="mt-0.5 w-fit text-[13px] text-[var(--color-rq-cta)] hover:underline"
-            >
-              {t("proactive.viewBudget")}
-            </Link>
-          </AlertShell>
-        );
-      })}
-    </section>
-  );
-}
-
-// ─── bill reminders (one card, multiple rows) ─────────────────────────────────
-
-function BillReminderCard({
-  bills,
-  index,
-  onDismiss,
-  onMarkPaid,
-}: {
-  bills: BillReminder[];
-  index: number;
-  onDismiss: (alertKey: string, periodKey: string) => void;
-  onMarkPaid: (bill: BillReminder, logExpense: boolean) => void;
-}) {
-  const { t } = useLanguage();
-  const [logExpense, setLogExpense] = React.useState<Record<string, boolean>>(
-    {},
-  );
-  const isLogging = (id: string) => logExpense[id] ?? true;
-
-  const anyOverdue = bills.some((b) => b.overdue);
-
-  // `daysUntilDue` is computed server-side (convex/proactive.ts) so the client
-  // never needs Date.now() during render.
-  const dueLabel = (bill: BillReminder): string => {
-    if (bill.overdue) {
-      return t("proactive.billOverdue").replace(
-        "{days}",
-        String(Math.max(1, -bill.daysUntilDue)),
-      );
+    for (const a of budgetAlerts) {
+      if (hiddenKeys.has(a.alertKey)) continue;
+      items.push({
+        kind: "budget",
+        // over (100%) before warning (80%)
+        priority: a.severity === "over" ? 0 : 1,
+        key: a.alertKey,
+        alert: a,
+      });
     }
-    if (bill.daysUntilDue <= 0) return t("proactive.billDueToday");
-    if (bill.daysUntilDue === 1) return t("proactive.billDueTomorrow");
-    return t("proactive.billDueInDays").replace(
-      "{days}",
-      String(bill.daysUntilDue),
-    );
+    for (const a of unusualAlerts) {
+      if (hiddenKeys.has(a.alertKey)) continue;
+      items.push({
+        kind: "unusual",
+        priority: 2,
+        key: a.alertKey,
+        alert: a,
+      });
+    }
+    for (const a of billReminders) {
+      if (hiddenKeys.has(a.alertKey)) continue;
+      items.push({
+        kind: "bill",
+        priority: a.overdue ? 2.5 : 3,
+        key: a.alertKey,
+        alert: a,
+      });
+    }
+    if (showSummary && summary && !summaryHidden) {
+      items.push({ kind: "summary", priority: 4, key: "monthly-summary" });
+    }
+
+    return items.sort((a, b) => a.priority - b.priority || a.key.localeCompare(b.key));
+  }, [
+    budgetAlerts,
+    unusualAlerts,
+    billReminders,
+    hiddenKeys,
+    showSummary,
+    summary,
+    summaryHidden,
+  ]);
+
+  React.useEffect(() => {
+    if (cursor >= queue.length) setCursor(0);
+  }, [cursor, queue.length]);
+
+  if (loading || queue.length === 0) return null;
+
+  const current = queue[Math.min(cursor, queue.length - 1)]!;
+  const hasMore = queue.length > 1;
+  const remaining = queue.length - 1;
+
+  const goNext = () => {
+    setCursor((c) => (c + 1) % queue.length);
   };
 
-  return (
-    <AlertShell
-      tone={anyOverdue ? "danger" : "caution"}
-      index={index}
-      icon={<CalendarClock className="h-4 w-4" />}
-      dismissLabel={t("proactive.dismiss")}
-    >
-      <span className="text-[14px] font-semibold leading-snug">
-        {t("proactive.billDueTitle")}
+  const catName = (ur: string, en: string) =>
+    language === "ur" ? ur : en;
+
+  let tone: StickyBannerTone = "warn";
+  let icon: React.ReactNode = <TriangleAlert className="h-5 w-5" />;
+  let title = "";
+  let body = "";
+  let primaryAction: React.ReactNode = null;
+  let secondaryAction: React.ReactNode = null;
+  let onDismiss = () => {};
+
+  if (current.kind === "budget") {
+    const a = current.alert;
+    const over = a.severity === "over";
+    tone = over ? "danger" : "warn";
+    icon = <TriangleAlert className="h-5 w-5" />;
+    title = over
+      ? t("proactive.budgetOverTitle")
+      : t("proactive.budgetWarnTitle");
+    body = t("proactive.budgetBody")
+      .replace("{category}", catName(a.categoryNameUr, a.categoryName))
+      .replace("{pct}", String(a.pct))
+      .replace("{spent}", formatPKR(a.spent))
+      .replace("{limit}", formatPKR(a.limit));
+    primaryAction = (
+      <Link href="/budgets" className={ctaClass}>
+        {t("proactive.viewBudget")}
+      </Link>
+    );
+    onDismiss = () => hide(a.alertKey, a.periodKey);
+  } else if (current.kind === "unusual") {
+    const a = current.alert;
+    tone = "info";
+    icon = <TrendingUp className="h-5 w-5" />;
+    title = t("proactive.unusualTitle");
+    body = t("proactive.unusualBody")
+      .replace("{category}", catName(a.categoryNameUr, a.categoryName))
+      .replace("{pct}", String(a.deviationPercent))
+      .replace("{amount}", formatPKR(a.currentSpend));
+    primaryAction = (
+      <Link href="/transactions" className={ctaClass}>
+        {t("proactive.viewTxns")}
+      </Link>
+    );
+    onDismiss = () => hide(a.alertKey, a.periodKey);
+  } else if (current.kind === "bill") {
+    const bill = current.alert;
+    tone = bill.overdue ? "danger" : "warn";
+    icon = <CalendarClock className="h-5 w-5" />;
+    title = t("proactive.billDueTitle");
+    const due =
+      bill.overdue
+        ? t("proactive.billOverdue").replace(
+            "{days}",
+            String(Math.max(1, -bill.daysUntilDue)),
+          )
+        : bill.daysUntilDue <= 0
+          ? t("proactive.billDueToday")
+          : bill.daysUntilDue === 1
+            ? t("proactive.billDueTomorrow")
+            : t("proactive.billDueInDays").replace(
+                "{days}",
+                String(bill.daysUntilDue),
+              );
+    body = t("proactive.billBody")
+      .replace("{description}", bill.description)
+      .replace("{amount}", formatPKR(bill.amount))
+      .replace("{due}", due);
+    primaryAction = (
+      <button
+        type="button"
+        className={ctaClass}
+        onClick={async () => {
+          hide(bill.alertKey, bill.periodKey);
+          try {
+            await markPaid(bill.recurringId, logExpense);
+            addToast({ type: "success", title: t("recurring.toast.paid") });
+          } catch {
+            addToast({ type: "error", title: t("recurring.toast.error") });
+          }
+        }}
+      >
+        {t("proactive.billMarkPaid")}
+      </button>
+    );
+    secondaryAction = (
+      <>
+        <Link href="/budgets" className={ghostCtaClass}>
+          {t("proactive.viewBudget")}
+        </Link>
+        <label className="flex min-h-11 cursor-pointer items-center gap-2 px-1 text-[13px] text-[#4C5A52]">
+          <input
+            type="checkbox"
+            checked={logExpense}
+            onChange={(e) => setLogExpense(e.target.checked)}
+            className="h-4 w-4 accent-[#0F5132]"
+          />
+          {t("proactive.billLogExpense")}
+        </label>
+      </>
+    );
+    onDismiss = () => hide(bill.alertKey, bill.periodKey);
+  } else {
+    // summary
+    tone = "gold";
+    icon = <Sparkles className="h-5 w-5" />;
+    title = t("summary.title");
+    const monthLabel = summary
+      ? new Date(summary.month).toLocaleDateString(
+          language === "ur" ? "ur-PK" : "en-PK",
+          { month: "long", year: "numeric" },
+        )
+      : "";
+    body = t("proactive.summaryBody")
+      .replace("{month}", monthLabel)
+      .replace("{net}", formatPKR(summary?.net ?? 0))
+      .replace("{rate}", String(summary?.savingsRate ?? 0));
+    primaryAction = null;
+    secondaryAction = (
+      <span className="text-[13px] text-[#6B7A70]">
+        {t("summary.income")}: {formatPKR(summary?.income ?? 0)} ·{" "}
+        {t("summary.expenses")}: {formatPKR(summary?.expenses ?? 0)}
       </span>
-      <div className="mt-1 flex flex-col divide-y divide-[var(--color-rq-divider)]">
-        {bills.map((bill) => (
-          <div key={bill.alertKey} className="flex flex-col gap-2 py-2.5 first:pt-1">
-            <div className="flex items-baseline justify-between gap-3">
-              <span className="min-w-0 truncate text-[13px]">
-                <span className="me-1">{bill.categoryIcon}</span>
-                {bill.description}
-              </span>
-              <span className="shrink-0 font-[var(--font-manrope)] text-[13px] font-semibold">
-                {pkr(bill.amount)}
-              </span>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <span
-                className="text-[12px]"
-                style={{
-                  color: bill.overdue
-                    ? SPINE.danger
-                    : "var(--color-rq-text-secondary)",
-                }}
-              >
-                {dueLabel(bill)}
-              </span>
-              <button
-                onClick={() => onDismiss(bill.alertKey, bill.periodKey)}
-                className="text-[12px] text-[var(--color-rq-text-faint)] hover:text-[var(--color-rq-text-muted)]"
-              >
-                {t("proactive.dismiss")}
-              </button>
-            </div>
-            <label className="flex items-center gap-2 text-[12px] text-[var(--color-rq-text-secondary)]">
-              <input
-                type="checkbox"
-                checked={isLogging(bill.recurringId)}
-                onChange={(e) =>
-                  setLogExpense((prev) => ({
-                    ...prev,
-                    [bill.recurringId]: e.target.checked,
-                  }))
-                }
-                className="h-3.5 w-3.5 accent-[var(--color-rq-cta)]"
-              />
-              {t("proactive.billLogExpense")}
-            </label>
-            <button
-              onClick={() => onMarkPaid(bill, isLogging(bill.recurringId))}
-              className="w-fit rounded-[9px] bg-[var(--color-rq-cta)] px-3.5 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-[var(--color-rq-cta-hover)]"
-            >
-              {t("proactive.billMarkPaid")}
-            </button>
-          </div>
-        ))}
-      </div>
-    </AlertShell>
-  );
-}
-
-// ─── monthly summary ─────────────────────────────────────────────────────────
-
-function MonthlySummaryCard({
-  summary,
-  index,
-  onDismiss,
-}: {
-  summary: NonNullable<ReturnType<typeof useMonthlySummary>["summary"]>;
-  index: number;
-  onDismiss: () => void;
-}) {
-  const { t, language } = useLanguage();
-  const monthLabel = new Date(summary.month).toLocaleDateString(
-    language === "ur" ? "ur-PK" : "en-PK",
-    { month: "long", year: "numeric" },
-  );
-
-  const figures: Array<{ label: string; value: string; accent?: string }> = [
-    { label: t("summary.income"), value: pkr(summary.income) },
-    { label: t("summary.expenses"), value: pkr(summary.expenses) },
-    {
-      label: t("summary.net"),
-      value: pkr(summary.net),
-      accent:
-        summary.net >= 0 ? "var(--color-rq-cta)" : "var(--color-rq-danger)",
-    },
-    { label: t("summary.savingsRate"), value: `${summary.savingsRate}%` },
-  ];
+    );
+    onDismiss = () => {
+      setSummaryHidden(true);
+      dismissSummary().catch(() => setSummaryHidden(false));
+    };
+  }
 
   return (
-    <div
-      className="overflow-hidden rounded-xl border border-[var(--color-rq-card-border)] border-t-2 border-t-[var(--color-rq-gold)] bg-[var(--color-rq-card)] animate-in fade-in slide-in-from-top-2 duration-200"
-      style={{ animationDelay: `${index * 60}ms`, animationFillMode: "backwards" }}
-    >
-      <div className="flex flex-col gap-3.5 p-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-[var(--color-rq-gold)]" />
-            <span className="text-[14px] font-semibold">
-              {t("summary.title")}
-            </span>
-            <span className="text-[12px] text-[var(--color-rq-text-faint)]">
-              {monthLabel}
-            </span>
-          </div>
+    <section aria-label={t("proactive.regionLabel")} className="flex flex-col gap-2">
+      <StickyBannerSlot>
+        <StickyBanner
+          key={current.key}
+          id={current.key}
+          tone={tone}
+          icon={icon}
+          title={title}
+          body={body}
+          primaryAction={primaryAction}
+          secondaryAction={secondaryAction}
+          dismissLabel={
+            current.kind === "summary"
+              ? t("summary.dismiss")
+              : t("proactive.dismiss")
+          }
+          onDismiss={onDismiss}
+        />
+      </StickyBannerSlot>
+
+      {hasMore ? (
+        <div className="flex items-center justify-between gap-3 px-1">
+          <span className="text-[13px] text-[#6B7A70]">
+            {t("proactive.moreCount").replace("{n}", String(remaining))}
+          </span>
           <button
-            onClick={onDismiss}
-            className="shrink-0 rounded-md px-2 py-1 text-[12px] text-[var(--color-rq-text-faint)] transition-colors hover:bg-[var(--color-rq-chip-bg)] hover:text-[var(--color-rq-text-muted)]"
+            type="button"
+            onClick={goNext}
+            className="inline-flex min-h-11 items-center justify-center rounded-[12px] px-3 text-[14px] font-medium text-[#0F5132] underline-offset-4 hover:underline"
           >
-            {t("summary.dismiss")}
+            {t("proactive.nextAlert")}
           </button>
         </div>
-
-        <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-4">
-          {figures.map((f) => (
-            <div key={f.label} className="flex flex-col gap-0.5">
-              <span className="text-[11px] text-[var(--color-rq-text-faint)]">
-                {f.label}
-              </span>
-              <span
-                className="font-[var(--font-manrope)] text-[16px] font-bold tracking-[-.01em]"
-                style={f.accent ? { color: f.accent } : undefined}
-              >
-                {f.value}
-              </span>
-            </div>
-          ))}
-        </div>
-
-        {summary.topCategories.length > 0 && (
-          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--color-rq-divider)] pt-3">
-            <span className="text-[11px] text-[var(--color-rq-text-faint)]">
-              {t("summary.topCategories")}
-            </span>
-            {summary.topCategories.map((c) => (
-              <span
-                key={c.categoryId}
-                className="inline-flex items-center gap-1 rounded-full bg-[var(--color-rq-chip-bg)] px-2.5 py-1 text-[12px]"
-              >
-                <span>{c.icon}</span>
-                {language === "ur" ? c.nameUr : c.name}
-                <span className="font-[var(--font-manrope)] text-[var(--color-rq-text-secondary)]">
-                  {pkr(c.amount)}
-                </span>
-              </span>
-            ))}
-          </div>
-        )}
-
-        {summary.expenseDeltaPct !== null && summary.expenseDeltaPct !== 0 && (
-          <span
-            className="text-[12px]"
-            style={{
-              color:
-                summary.expenseDeltaPct > 0
-                  ? "var(--color-rq-warning)"
-                  : "var(--color-rq-success)",
-            }}
-          >
-            {summary.expenseDeltaPct > 0
-              ? t("summary.expenseUp").replace(
-                  "{pct}",
-                  String(summary.expenseDeltaPct),
-                )
-              : t("summary.expenseDown").replace(
-                  "{pct}",
-                  String(Math.abs(summary.expenseDeltaPct)),
-                )}
-          </span>
-        )}
-      </div>
-    </div>
+      ) : null}
+    </section>
   );
 }

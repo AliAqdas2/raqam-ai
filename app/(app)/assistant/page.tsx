@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { Suspense } from "react";
+import { useSearchParams } from "next/navigation";
+import { PanelLeftClose, PanelLeftOpen, History } from "lucide-react";
 
 import { useAssistant } from "@/hooks/useAssistant";
 import { useVoiceInput } from "@/hooks/useVoiceInput";
@@ -11,6 +13,7 @@ import { useLanguage } from "@/components/LanguageProvider";
 import { ErrorState } from "@/components/shared/DataStates";
 import { ConfirmationCard } from "@/components/assistant/ConfirmationCard";
 import { ChatHistoryPanel } from "@/components/assistant/ChatHistoryPanel";
+import { ChatHistorySheet } from "@/components/assistant/ChatHistorySheet";
 import { ChatComposer } from "@/components/assistant/ChatComposer";
 import { ChatEmptyState } from "@/components/assistant/ChatEmptyState";
 import { ChatMessage } from "@/components/assistant/ChatMessage";
@@ -20,6 +23,21 @@ import { ReceiptUploadDialog } from "@/components/receipt/ReceiptUploadDialog";
 import type { ReceiptExtractedData } from "@/components/receipt/ReceiptUploadDialog";
 
 export default function AssistantPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-[calc(100dvh-4rem)] items-center justify-center lg:h-screen">
+          <div className="h-8 w-8 animate-spin rounded-full border-2 border-[#0F5132] border-t-transparent" />
+        </div>
+      }
+    >
+      <AssistantPageInner />
+    </Suspense>
+  );
+}
+
+function AssistantPageInner() {
+  const searchParams = useSearchParams();
   const {
     conversations,
     messages,
@@ -42,9 +60,26 @@ export default function AssistantPage() {
   const [voiceProvider, setVoiceProvider] =
     React.useState<TranscriptProvider | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  const [historySheetOpen, setHistorySheetOpen] = React.useState(false);
   const [receiptDialogOpen, setReceiptDialogOpen] = React.useState(false);
+  const draftApplied = React.useRef(false);
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
+
+  // Prefill composer from onboarding (?draft=…)
+  React.useEffect(() => {
+    if (draftApplied.current) return;
+    const draft = searchParams.get("draft");
+    if (!draft) return;
+    draftApplied.current = true;
+    setInput(draft);
+    // Drop the query so refresh does not re-apply after the user clears.
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("draft");
+      window.history.replaceState({}, "", url.pathname + url.search);
+    }
+  }, [searchParams]);
 
   // ── Autoscroll to the newest message ──
   React.useEffect(() => {
@@ -92,14 +127,20 @@ export default function AssistantPage() {
 
   const handleSendReceipt = async (data: ReceiptExtractedData) => {
     const parts: string[] = [];
-    if (data.merchant) parts.push(`Merchant: ${data.merchant}`);
-    if (data.amount) parts.push(`Amount: Rs. ${data.amount}`);
-    if (data.date) parts.push(`Date: ${data.date}`);
-    if (data.description) parts.push(`Items: ${data.description}`);
+    if (data.merchant)
+      parts.push(`${t("assistant.receiptMsgMerchant")}: ${data.merchant}`);
+    if (data.amount)
+      parts.push(`${t("assistant.receiptMsgAmount")}: Rs. ${data.amount}`);
+    if (data.date)
+      parts.push(`${t("assistant.receiptMsgDate")}: ${data.date}`);
+    if (data.description)
+      parts.push(`${t("assistant.receiptMsgItems")}: ${data.description}`);
     if (data.categorySuggestion)
-      parts.push(`Category: ${data.categorySuggestion}`);
+      parts.push(
+        `${t("assistant.receiptMsgCategory")}: ${data.categorySuggestion}`,
+      );
 
-    const message = `I scanned a receipt. Here are the details:\n${parts.join("\n")}\n\nPlease add this as an expense transaction.`;
+    const message = `${t("assistant.receiptMsgIntro")}\n${parts.join("\n")}\n\n${t("assistant.receiptMsgAsk")}`;
     await sendMessage(message, "receipt");
   };
 
@@ -147,8 +188,9 @@ export default function AssistantPage() {
         {/* Header */}
         <header className="flex items-center gap-3 border-b border-border bg-card px-4 py-4 sm:px-8">
           <button
+            type="button"
             onClick={() => setSidebarOpen((v) => !v)}
-            className="hidden h-9 w-9 place-items-center rounded-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-primary md:grid"
+            className="hidden h-11 w-11 place-items-center rounded-[10px] text-muted-foreground transition-colors hover:bg-secondary hover:text-primary md:grid"
             aria-label={t("assistant.chatHistory")}
           >
             {sidebarOpen ? (
@@ -156,6 +198,14 @@ export default function AssistantPage() {
             ) : (
               <PanelLeftOpen className="h-[18px] w-[18px]" />
             )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setHistorySheetOpen(true)}
+            className="inline-flex min-h-11 items-center gap-2 rounded-[10px] bg-secondary px-3 text-[13px] font-medium text-primary md:hidden"
+          >
+            <History className="h-4 w-4" aria-hidden />
+            {t("assistant.historySheetTitle")}
           </button>
           <span className="grid h-[38px] w-[38px] place-items-center rounded-[11px] bg-primary pb-1 font-[var(--font-nastaliq)] text-[17px] text-[#E8B931]">
             ر
@@ -181,7 +231,10 @@ export default function AssistantPage() {
           {error && <ErrorState />}
 
           {!loading && !error && messages.length === 0 && (
-            <ChatEmptyState onSelect={handleSuggestion} />
+            <ChatEmptyState
+              onSelect={handleSuggestion}
+              highlightText={input.trim() || undefined}
+            />
           )}
 
           {!loading &&
@@ -246,6 +299,17 @@ export default function AssistantPage() {
           onOpenChange={setReceiptDialogOpen}
           onSendReceipt={handleSendReceipt}
           sending={sending}
+        />
+
+        <ChatHistorySheet
+          open={historySheetOpen}
+          onOpenChange={setHistorySheetOpen}
+          conversations={conversations}
+          currentConversationId={currentConversationId}
+          onNewChat={startNewConversation}
+          onSwitch={switchConversation}
+          onDelete={deleteConversation}
+          disabled={sending}
         />
       </div>
     </div>

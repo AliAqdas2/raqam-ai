@@ -4,15 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Cascade-able UI stack. @theme inline inlines this into .font-sans / .font-heading,
+   so language overrides must rewrite --rq-font-ui (not --font-sans). */
+:root {
+  --rq-font-ui: var(--font-noto-sans-arabic), var(--font-geist-sans), system-ui,
+    sans-serif;
+}
+
 @theme inline {
   /* ── Raqam-AI Design Tokens ── */
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans:
-    var(--font-noto-sans-arabic), var(--font-geist-sans), system-ui, sans-serif;
+  --font-sans: var(--rq-font-ui);
   --font-mono: var(--font-geist-mono);
-  --font-heading:
-    var(--font-noto-sans-arabic), var(--font-geist-sans), system-ui, sans-serif;
+  --font-heading: var(--rq-font-ui);
   --font-manrope: var(--font-manrope), "Manrope", system-ui, sans-serif;
   --font-nastaliq: var(--font-noto-nastaliq-urdu), "Noto Nastaliq Urdu", serif;
 
@@ -200,9 +205,19 @@
   }
 }
 
+/* Urdu mode: Nastaliq as the default UI font (same as assistant chat).
+   Override --rq-font-ui so inlined .font-sans / .font-heading pick it up.
+   English keeps Sans Arabic via :root. line-height 1.9 is denser than
+   .font-reading’s 2.5 but enough for Nastaliq UI. */
+html[lang="ur"] {
+  --rq-font-ui: var(--font-noto-nastaliq-urdu), "Noto Nastaliq Urdu", serif;
+  line-height: 1.9;
+}
+
 /* ── Urdu reading surfaces (AI replies, assistant greeting) ──────────────────
-   Nastaliq needs a tall line-height so its diagonal ligatures and deep
-   descenders don't collide. Everything else stays in Noto Sans Arabic. */
+   Tall line-height for long Nastaliq paragraphs so diagonal ligatures and deep
+   descenders don't collide. Under html[lang="ur"] the family is already
+   Nastaliq; this utility still applies the looser reading line-height. */
 @layer components {
   .font-reading {
     font-family: var(--font-nastaliq);

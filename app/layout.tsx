@@ -63,7 +63,8 @@ const clerkAppearance = {
     colorDanger: "#B3261E",
     colorSuccess: "#22B07D",
     borderRadius: "10px",
-    fontFamily: "var(--font-noto-sans-arabic), var(--font-geist-sans), sans-serif",
+    // Tracks html[lang="ur"] token override in globals.css (Nastaliq in Urdu).
+    fontFamily: "var(--font-sans)",
   },
 } as const;
 

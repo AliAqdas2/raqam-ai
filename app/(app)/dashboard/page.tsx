@@ -1,9 +1,13 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
+import { ArrowLeftRight } from "lucide-react";
 import { useFinancialSummary } from "@/hooks/useFinancialSummary";
 import { useGoals } from "@/hooks/useGoals";
 import { useBudgets } from "@/hooks/useBudgets";
+import { useTransactions } from "@/hooks/useTransactions";
+import { useCategories } from "@/hooks/useCategories";
 import { useLanguage } from "@/components/LanguageProvider";
 import {
   EmptyState,
@@ -11,10 +15,17 @@ import {
   CardSkeleton,
   ChartSkeleton,
 } from "@/components/shared/DataStates";
+import {
+  TransactionFormDialog,
+  type TransactionFormData,
+} from "@/components/transactions/TransactionFormDialog";
 import { ProactiveAlerts } from "@/components/dashboard/ProactiveAlerts";
+import { HeroStat } from "@/components/dashboard/HeroStat";
+import { BudgetProgressBar } from "@/components/budgets/BudgetProgressBar";
+import { formatPKR } from "@/lib/i18n/format";
 
 function pkr(n: string | number) {
-  return `Rs. ${typeof n === "number" ? n.toLocaleString() : n}`;
+  return typeof n === "number" ? formatPKR(n) : `Rs. ${n}`;
 }
 
 /**
@@ -26,7 +37,32 @@ export default function DashboardPage() {
   const { summary, loading: summaryLoading } = useFinancialSummary();
   const { goals, loading: goalsLoading } = useGoals();
   const { budgetCategories, loading: budgetLoading } = useBudgets();
+  const { createTransaction } = useTransactions();
+  const { categories } = useCategories();
   const { t, language } = useLanguage();
+
+  const [formOpen, setFormOpen] = React.useState(false);
+
+  const openAddTransaction = React.useCallback(() => {
+    setFormOpen(true);
+  }, []);
+
+  const handleFormSubmit = React.useCallback(
+    async (data: TransactionFormData) => {
+      const amount = parseFloat(data.amount);
+      const dateMs = new Date(data.date).getTime();
+      await createTransaction({
+        type: data.type,
+        amount,
+        categoryId: data.categoryId,
+        date: dateMs,
+        description: data.description,
+        notes: data.notes,
+        source: "manual",
+      });
+    },
+    [createTransaction],
+  );
 
   const categorySpending = summary?.categoryBreakdown ?? [];
   const recentTransactions = summary?.recentTransactions ?? [];
@@ -43,76 +79,70 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col">
-      <DashboardHeader />
+      <DashboardHeader onAddTransaction={openAddTransaction} />
 
       <div className="flex flex-col gap-[22px] px-6 pb-12 pt-7 sm:px-10">
         <ProactiveAlerts />
 
         {isEmpty ? (
-          <>
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <StatCardSkeleton key={i} />
-              ))}
-            </div>
-            <EmptyState
-              icon="📊"
-              title={t("dashboard.emptyTitle")}
-              description={t("dashboard.emptyDesc")}
-              actionLabel={t("dashboard.newTransaction")}
-            />
-          </>
+          <EmptyState
+            icon={ArrowLeftRight}
+            title={t("dashboard.emptyTitle")}
+            description={t("dashboard.emptyDesc")}
+            actionLabel={t("dashboard.newTransaction")}
+            onAction={openAddTransaction}
+          />
         ) : (
           <>
-            {/* Stat cards */}
+            {/* Stat cards — hero savings + income/expense (plan 04) */}
             {summaryLoading ? (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <StatCardSkeleton key={i} />
-                ))}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <StatCardSkeleton />
+                <StatCardSkeleton />
+                <StatCardSkeleton />
               </div>
             ) : (
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="flex min-w-0 flex-col gap-2 rounded-2xl bg-[#0F5132] p-5 text-[#EAF1EB]">
-                  <span className="text-[13px] text-[#B9CFC1]">
-                    {t("dashboard.savingsThisMonth")}
-                  </span>
-                  <span className="font-[var(--font-manrope)] text-[clamp(20px,2.1vw,30px)] font-extrabold tracking-[-.02em] whitespace-nowrap">
-                    {pkr(summary?.netSavings ?? 0)}
-                  </span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-[#E7E2D6] bg-white p-5">
-                  <span className="text-[13px] text-[#6B7A70]">
-                    {t("dashboard.totalIncome")}
-                  </span>
-                  <span className="font-[var(--font-manrope)] text-[clamp(20px,2.1vw,30px)] font-extrabold tracking-[-.02em] whitespace-nowrap">
-                    {pkr(summary?.totalIncome ?? 0)}
-                  </span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-[#E7E2D6] bg-white p-5">
-                  <span className="text-[13px] text-[#6B7A70]">
-                    {t("dashboard.totalExpenses")}
-                  </span>
-                  <span className="font-[var(--font-manrope)] text-[clamp(20px,2.1vw,30px)] font-extrabold tracking-[-.02em] whitespace-nowrap">
-                    {pkr(summary?.totalExpenses ?? 0)}
-                  </span>
-                </div>
-                <div className="flex min-w-0 flex-col gap-2 rounded-2xl border border-[#E7E2D6] bg-white p-5">
-                  <span className="text-[13px] text-[#6B7A70]">
-                    {t("dashboard.savingsRate")}
-                  </span>
-                  <span className="font-[var(--font-manrope)] text-[clamp(20px,2.1vw,30px)] font-extrabold tracking-[-.02em] whitespace-nowrap">
-                    {summary ? `${summary.savingsRate.toFixed(1)}%` : "—"}
-                  </span>
-                  <div className="h-[6px] overflow-hidden rounded-full bg-[#EDEAE0]">
-                    <div
-                      className="h-full rounded-full bg-[#22B07D]"
-                      style={{
-                        width: `${Math.min(summary?.savingsRate ?? 0, 100)}%`,
-                      }}
-                    />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <HeroStat
+                  variant="hero"
+                  value={summary?.netSavings ?? 0}
+                  label={t("dashboard.savingsThisMonth")}
+                  hint={
+                    (summary?.netSavings ?? 0) > 0
+                      ? t("dashboard.hintSavingsPositive")
+                      : (summary?.netSavings ?? 0) < 0
+                        ? t("dashboard.hintSavingsNegative")
+                        : t("dashboard.hintSavingsZero")
+                  }
+                />
+                <HeroStat
+                  value={summary?.totalIncome ?? 0}
+                  label={t("dashboard.totalIncome")}
+                  hint={t("dashboard.hintIncome")}
+                />
+                <HeroStat
+                  value={summary?.totalExpenses ?? 0}
+                  label={t("dashboard.totalExpenses")}
+                  hint={t("dashboard.hintExpenses")}
+                />
+                {/* Demoted savings rate — only when there is income; plain language */}
+                {(summary?.totalIncome ?? 0) > 0 ? (
+                  <div className="flex min-w-0 flex-col justify-center gap-1 rounded-2xl border border-dashed border-[#CBD9CF] bg-[#F4F8F5] px-5 py-4 sm:col-span-2">
+                    <span className="text-[12px] text-[#6B7A70]">
+                      {t("dashboard.savingsRate")}
+                    </span>
+                    <p className="text-[15px] leading-[1.8] text-[#14231B]">
+                      {t("dashboard.savingsRatePlainPrefix")}{" "}
+                      <span className="font-[var(--font-manrope)] font-bold text-[#0F5132]">
+                        {Math.max(
+                          0,
+                          Math.round(summary?.savingsRate ?? 0),
+                        )}
+                      </span>{" "}
+                      {t("dashboard.savingsRatePlainSuffix")}
+                    </p>
                   </div>
-                </div>
+                ) : null}
               </div>
             )}
 
@@ -233,9 +263,11 @@ export default function DashboardPage() {
                     {t("dashboard.recentTransactions")}
                   </h2>
                   <EmptyState
-                    icon="💸"
+                    icon={ArrowLeftRight}
                     title={t("dashboard.noTransactions")}
                     description={t("dashboard.noTransactionsDesc")}
+                    actionLabel={t("dashboard.noTransactionsAction")}
+                    onAction={openAddTransaction}
                   />
                 </div>
               )}
@@ -257,46 +289,21 @@ export default function DashboardPage() {
                         {t("dashboard.detail")}
                       </Link>
                     </div>
-                    <div className="flex flex-col gap-[13px]">
-                      {budgetCategories.map((b) => {
-                        const pct =
-                          b.limit > 0 ? Math.round((b.spent / b.limit) * 100) : 0;
-                        const color =
-                          pct >= 100
-                            ? "#B3261E"
-                            : pct >= 80
-                              ? "#C4622D"
-                              : pct >= 60
-                                ? "#D8A72A"
-                                : "#22B07D";
-                        return (
-                          <div key={b.id} className="flex flex-col gap-1.5">
-                            <div className="flex justify-between text-[14px]">
-                              <span>
-                                {b.categoryIcon}{" "}
-                                {language === "ur"
-                                  ? b.categoryNameUr
-                                  : b.categoryName}
-                              </span>
-                              <span
-                                className="font-[var(--font-manrope)]"
-                                style={{ color }}
-                              >
-                                {pct}% · {pkr(b.spent)} / {pkr(b.limit)}
-                              </span>
-                            </div>
-                            <div className="h-2 overflow-hidden rounded-full bg-[#EDEAE0]">
-                              <div
-                                className="h-full rounded-full"
-                                style={{
-                                  width: `${Math.min(pct, 100)}%`,
-                                  background: color,
-                                }}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
+                    <div className="flex flex-col gap-2.5">
+                      {budgetCategories.map((b) => (
+                        <BudgetProgressBar
+                          key={b.id}
+                          compact
+                          name={
+                            language === "ur"
+                              ? b.categoryNameUr
+                              : b.categoryName
+                          }
+                          icon={b.categoryIcon}
+                          spent={b.spent}
+                          limit={b.limit}
+                        />
+                      ))}
                     </div>
                   </div>
                 ) : null}
@@ -337,12 +344,23 @@ export default function DashboardPage() {
           </>
         )}
       </div>
+
+      <TransactionFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        categories={categories}
+        onSubmit={handleFormSubmit}
+      />
     </div>
   );
 }
 
 /* ── Shared header ── */
-function DashboardHeader() {
+function DashboardHeader({
+  onAddTransaction,
+}: {
+  onAddTransaction: () => void;
+}) {
   const { t } = useLanguage();
 
   return (
@@ -360,12 +378,13 @@ function DashboardHeader() {
         >
           {t("dashboard.viewTransactions")}
         </Link>
-        <Link
-          href="/transactions"
+        <button
+          type="button"
+          onClick={onAddTransaction}
           className="rounded-[10px] border-0 bg-[#0F5132] px-[18px] py-[11px] text-[14px] text-white hover:bg-[#14231B]"
         >
           {t("dashboard.newTransaction")}
-        </Link>
+        </button>
       </div>
     </header>
   );

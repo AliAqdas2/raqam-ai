@@ -12,17 +12,16 @@ import {
 } from "@/hooks/useImports";
 import { useCategories } from "@/hooks/useCategories";
 import { ImportPreviewTable } from "@/components/import/ImportPreviewTable";
+import { ImportUploader } from "@/components/import/ImportUploader";
+import { StepHeader } from "@/components/onboarding/StepHeader";
 import { EmptyState, ListSkeleton } from "@/components/shared/DataStates";
 import { formatDate } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/ur";
 import { FileUp, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 // app/(app)/import/page.tsx — Bank statement import (Phase 12)
-//
-// Upload CSV → server-side preview (editable, duplicate-flagged) → atomic
-// confirm into transactions. Nothing persists before the user reviews.
-
-// ─── Error code → localized message ─────────────────────────────────────────────
+// Mental model: Upload → Review → Save. Nothing persists before confirm.
 
 const ERROR_KEYS: Record<ImportErrorCode, TranslationKey> = {
   unsupportedType: "import.error.unsupportedType",
@@ -38,12 +37,10 @@ const ERROR_KEYS: Record<ImportErrorCode, TranslationKey> = {
   server: "import.error.server",
 };
 
-// ─── Status badge ───────────────────────────────────────────────────────────────
-
 const STATUS_STYLES: Record<string, string> = {
-  preview: "bg-[#FDF3D8] text-[#B07D2A] border-[#D8A72A]/30",
-  confirmed: "bg-[#E6EFE9] text-[#1B7A4B] border-[#22B07D]/30",
-  failed: "bg-[#FDE8E8] text-[#B3261E] border-[#B3261E]/20",
+  preview: "bg-[#FDF3D8] text-[#6B5B2E] border-[#D8A72A]/40",
+  confirmed: "bg-[#E6EFE9] text-[#0F5132] border-[#22B07D]/35",
+  failed: "bg-[#FDE8E8] text-[#B3261E] border-[#B3261E]/25",
 };
 
 function StatusBadge({ status }: { status: ImportRecord["status"] }) {
@@ -58,16 +55,16 @@ function StatusBadge({ status }: { status: ImportRecord["status"] }) {
           : status;
   return (
     <span
-      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-        STATUS_STYLES[status] ?? "border-[#E7E2D6] bg-[#F1EEE4] text-[#6B7A70]"
-      }`}
+      className={cn(
+        "inline-flex min-h-8 items-center rounded-full border px-3 py-1 text-[13px] font-semibold",
+        STATUS_STYLES[status] ??
+          "border-[#E7E2D6] bg-[#F1EEE4] text-[#6B7A70]",
+      )}
     >
       {label}
     </span>
   );
 }
-
-// ─── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ImportPage() {
   const { t, language } = useLanguage();
@@ -107,18 +104,16 @@ export default function ImportPage() {
     [addToast, t],
   );
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    try {
-      await uploadFile(file);
-    } catch (err) {
-      showError(err);
-    } finally {
-      // Reset so the same file can be re-selected after fixing it.
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
+  const handleFile = React.useCallback(
+    async (file: File) => {
+      try {
+        await uploadFile(file);
+      } catch (err) {
+        showError(err);
+      }
+    },
+    [uploadFile, showError],
+  );
 
   const handleConfirm = async (edits: ImportRowEdits[]) => {
     try {
@@ -130,6 +125,7 @@ export default function ImportPage() {
       });
     } catch (err) {
       showError(err);
+      throw err;
     }
   };
 
@@ -146,6 +142,14 @@ export default function ImportPage() {
   };
 
   const locale = language === "ur" ? "ur" : "en";
+  const flowStep =
+    busy === "confirming" ? 2 : preview || previewLoading ? 1 : 0;
+  const progressLabel =
+    flowStep === 0
+      ? t("import.step.1")
+      : flowStep === 1
+        ? t("import.step.2")
+        : t("import.step.3");
 
   return (
     <div>
@@ -159,7 +163,12 @@ export default function ImportPage() {
       </header>
 
       <div className="flex flex-col gap-8 px-6 py-7 sm:px-10">
-        {/* Preview (active import) or upload card */}
+        <StepHeader
+          step={flowStep}
+          totalSteps={3}
+          progressLabel={progressLabel}
+        />
+
         {previewLoading && !preview ? (
           <div className="flex items-center justify-center gap-3 rounded-2xl border border-[#E7E2D6] bg-white px-6 py-16">
             <Loader2 className="h-5 w-5 animate-spin text-[#0F5132]" />
@@ -182,79 +191,40 @@ export default function ImportPage() {
             onCancel={() => handleCancel()}
           />
         ) : (
-          <div
-            onClick={() => {
-              if (busy !== "uploading") fileInputRef.current?.click();
-            }}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                if (busy !== "uploading") fileInputRef.current?.click();
-              }
-            }}
-            className={`flex flex-col items-start gap-2.5 rounded-2xl border border-dashed border-[#CBD9CF] bg-white p-6 transition-colors ${
-              busy === "uploading"
-                ? "cursor-wait opacity-70"
-                : "cursor-pointer hover:border-[#0F5132] hover:bg-[#FBF9F4]"
-            }`}
-          >
-            <span className="font-[var(--font-manrope)] text-[11px] tracking-[.16em] text-[#8A9690]">
-              {t("import.uploadLabel")}
-            </span>
-            <h3 className="text-[18px] font-bold">{t("import.uploadTitle")}</h3>
-            <p className="text-[14px] leading-[2] text-[#6B7A70]">
-              {t("import.uploadDesc")}
-            </p>
-            <div className="mt-1 flex items-center gap-2 rounded-[9px] border-0 bg-[#0F5132] px-4 py-2.5 text-[14px] text-white">
-              {busy === "uploading" ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  {t("import.uploading")}
-                </>
-              ) : (
-                <>
-                  <FileUp className="h-4 w-4" />
-                  {t("import.selectFile")}
-                </>
-              )}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,text/csv,application/csv"
-              onChange={handleFileSelect}
-              className="hidden"
-            />
-          </div>
+          <ImportUploader
+            busy={busy === "uploading"}
+            onFile={handleFile}
+            inputRef={fileInputRef}
+          />
         )}
 
-        {/* History */}
         <section className="flex flex-col gap-4">
           <h2 className="text-[18px] font-bold">{t("import.historyTitle")}</h2>
           {importsLoading ? (
             <ListSkeleton rows={3} />
           ) : imports.length === 0 ? (
             <EmptyState
-              icon="📥"
+              icon={FileUp}
               title={t("import.historyEmptyTitle")}
               description={t("import.historyEmptyDesc")}
+              actionLabel={t("import.historyEmptyAction")}
+              onAction={() => fileInputRef.current?.click()}
             />
           ) : (
             <div className="flex flex-col gap-2.5">
               {imports.map((imp) => (
                 <div
                   key={imp.id}
-                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7E2D6] bg-white px-4 py-3"
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E7E2D6] bg-white px-4 py-3.5"
                 >
-                  <div className="flex min-w-0 flex-col gap-0.5">
-                    <div className="flex items-center gap-2">
-                      <span className="truncate text-[14px] font-semibold">
+                  <div className="flex min-w-0 flex-col gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate text-[15px] font-semibold">
                         {imp.fileName}
                       </span>
                       <StatusBadge status={imp.status} />
                     </div>
-                    <span className="text-[12px] text-[#6B7A70]">
+                    <span className="text-[13px] text-[#6B7A70]">
                       {formatDate(imp.createdAt, locale)}
                       {imp.rowCount != null &&
                         ` · ${t("import.rowsLabel")}: ${imp.rowCount}`}
@@ -268,16 +238,18 @@ export default function ImportPage() {
                   {imp.status === "preview" && (
                     <div className="flex gap-2">
                       <button
+                        type="button"
                         onClick={() => openPreview(imp.id)}
                         disabled={busy !== null}
-                        className="rounded-lg bg-[#0F5132] px-3.5 py-2 text-[13px] text-white hover:bg-[#14231B] disabled:opacity-50"
+                        className="min-h-11 rounded-[10px] bg-[#0F5132] px-4 text-[14px] text-white hover:bg-[#14231B] disabled:opacity-50"
                       >
                         {t("import.resume")}
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleCancel(imp.id)}
                         disabled={busy !== null}
-                        className="rounded-lg bg-[#F1EEE4] px-3.5 py-2 text-[13px] text-[#6B7A70] hover:bg-[#E9E4D5] disabled:opacity-50"
+                        className="min-h-11 rounded-[10px] bg-[#F1EEE4] px-4 text-[14px] text-[#6B7A70] hover:bg-[#E9E4D5] disabled:opacity-50"
                       >
                         {t("common.cancel")}
                       </button>

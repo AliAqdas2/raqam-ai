@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { StatefulButton } from "@/components/ui/stateful-button";
 import type { Category } from "@/hooks/useCategories";
 import { useLanguage } from "@/components/LanguageProvider";
 
@@ -46,7 +47,7 @@ interface Props {
   onOpenChange: (open: boolean) => void;
   categories: Category[];
   initialData?: Partial<TransactionFormData>;
-  onSubmit: (data: TransactionFormData) => void;
+  onSubmit: (data: TransactionFormData) => void | Promise<void>;
 }
 
 export function TransactionFormDialog({
@@ -96,7 +97,7 @@ function TransactionFormInner({
   isEdit: boolean;
   categories: Category[];
   initialData?: Partial<TransactionFormData>;
-  onSubmit: (data: TransactionFormData) => void;
+  onSubmit: (data: TransactionFormData) => void | Promise<void>;
   onClose: () => void;
 }) {
   const { t } = useLanguage();
@@ -105,6 +106,9 @@ function TransactionFormInner({
     ...initialData,
   });
   const [errors, setErrors] = React.useState<Record<string, string>>({});
+  const [submitStatus, setSubmitStatus] = React.useState<
+    "idle" | "loading" | "success"
+  >("idle");
 
   const set = <K extends keyof TransactionFormData>(
     key: K,
@@ -132,9 +136,18 @@ function TransactionFormInner({
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (validate()) onSubmit(form);
+    if (submitStatus === "loading" || submitStatus === "success") return;
+    if (!validate()) return;
+    setSubmitStatus("loading");
+    try {
+      await Promise.resolve(onSubmit(form));
+      setSubmitStatus("success");
+      window.setTimeout(() => onClose(), 450);
+    } catch {
+      setSubmitStatus("idle");
+    }
   };
 
   const categories = allCategories.filter(
@@ -164,6 +177,22 @@ function TransactionFormInner({
 
       {/* Body */}
       <div className="flex flex-col gap-4 px-6 py-5">
+        {/* Amount first */}
+        <div className="flex flex-col gap-1.5">
+          <Label className={labelCls}>{t("transactions.form.amount")}</Label>
+          <Input
+            type="number"
+            inputMode="decimal"
+            placeholder={t("transactions.form.amountPlaceholder")}
+            value={form.amount}
+            onChange={(e) => set("amount", e.target.value)}
+            className={`${inputCls} font-[var(--font-manrope)] text-[16px] font-semibold ${errors.amount ? "border-[#B3261E]" : ""}`}
+            dir="ltr"
+            autoFocus={!isEdit}
+          />
+          {errors.amount && <span className={errorCls}>{errors.amount}</span>}
+        </div>
+
         {/* Type toggle */}
         <div className="flex flex-col gap-1.5">
           <Label className={labelCls}>{t("transactions.form.type")}</Label>
@@ -191,21 +220,6 @@ function TransactionFormInner({
               {t("transactions.income")}
             </button>
           </div>
-        </div>
-
-        {/* Amount */}
-        <div className="flex flex-col gap-1.5">
-          <Label className={labelCls}>{t("transactions.form.amount")}</Label>
-          <Input
-            type="number"
-            inputMode="decimal"
-            placeholder={t("transactions.form.amountPlaceholder")}
-            value={form.amount}
-            onChange={(e) => set("amount", e.target.value)}
-            className={`${inputCls} font-[var(--font-manrope)] text-[16px] font-semibold ${errors.amount ? "border-[#B3261E]" : ""}`}
-            dir="ltr"
-          />
-          {errors.amount && <span className={errorCls}>{errors.amount}</span>}
         </div>
 
         {/* Category */}
@@ -306,18 +320,22 @@ function TransactionFormInner({
           type="button"
           variant="outline"
           onClick={onClose}
-          className="rounded-[10px] border-[#DCD6C8] bg-white px-5 py-2.5 text-[14px] hover:bg-[#FBF9F4]"
+          disabled={submitStatus === "loading" || submitStatus === "success"}
+          className="min-h-12 rounded-[12px] border-[#DCD6C8] bg-white px-5 text-[14px] hover:bg-[#FBF9F4]"
         >
           {t("transactions.form.cancel")}
         </Button>
-        <Button
+        <StatefulButton
           type="submit"
-          className="rounded-[10px] border-0 bg-[#0F5132] px-6 py-2.5 text-[14px] text-white hover:bg-[#14231B]"
+          status={submitStatus}
+          loadingLabel={t("transactions.form.saving")}
+          successLabel={t("transactions.form.saved")}
+          className="flex-1 sm:flex-none"
         >
           {isEdit
             ? t("transactions.form.saveChanges")
             : t("transactions.form.save")}
-        </Button>
+        </StatefulButton>
       </DialogFooter>
     </form>
   );
