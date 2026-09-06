@@ -133,13 +133,10 @@ export function ProactiveAlerts() {
     summaryHidden,
   ]);
 
-  React.useEffect(() => {
-    if (cursor >= queue.length) setCursor(0);
-  }, [cursor, queue.length]);
-
   if (loading || queue.length === 0) return null;
 
-  const current = queue[Math.min(cursor, queue.length - 1)]!;
+  const safeIndex = Math.min(cursor, Math.max(queue.length - 1, 0));
+  const current = queue[safeIndex]!;
   const hasMore = queue.length > 1;
   const remaining = queue.length - 1;
 

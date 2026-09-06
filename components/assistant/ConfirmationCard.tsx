@@ -87,9 +87,11 @@ export function ConfirmationCard({
   const isMobile = useIsMobile();
   const [confirming, setConfirming] = React.useState(false);
   const [rejecting, setRejecting] = React.useState(false);
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => setMounted(true), []);
+  const mounted = React.useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   const label =
     ACTION_TYPE_LABELS[action.actionType]?.[language] ?? action.actionType;

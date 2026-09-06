@@ -435,9 +435,11 @@ function FilterSheet({
 }) {
   const { t } = useLanguage();
   const reduceMotion = useReducedMotion();
-  const [mounted, setMounted] = React.useState(false);
-
-  React.useEffect(() => setMounted(true), []);
+  const mounted = React.useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
 
   React.useEffect(() => {
     if (!open) return;

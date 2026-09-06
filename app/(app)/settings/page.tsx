@@ -6,7 +6,6 @@ import {
   useNotificationPrefs,
   type NotificationPrefKey,
 } from "@/hooks/useNotificationPrefs";
-import { SignOutButton } from "@clerk/nextjs";
 
 function Toggle({ on, onChange }: { on: boolean; onChange?: () => void }) {
   return (

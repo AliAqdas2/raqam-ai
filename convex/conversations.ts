@@ -7,7 +7,6 @@ import {
 } from "./_generated/server";
 import { v } from "convex/values";
 import { requireUser } from "./auth";
-import type { Id } from "./_generated/dataModel";
 
 // ─── Queries ────────────────────────────────────────────────────────────────────
 

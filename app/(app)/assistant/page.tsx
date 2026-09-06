@@ -56,30 +56,24 @@ function AssistantPageInner() {
   const { t } = useLanguage();
   const voice = useVoiceInput();
 
-  const [input, setInput] = React.useState("");
+  const [input, setInput] = React.useState(
+    () => searchParams.get("draft") ?? "",
+  );
   const [voiceProvider, setVoiceProvider] =
     React.useState<TranscriptProvider | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(true);
   const [historySheetOpen, setHistorySheetOpen] = React.useState(false);
   const [receiptDialogOpen, setReceiptDialogOpen] = React.useState(false);
-  const draftApplied = React.useRef(false);
 
   const messagesEndRef = React.useRef<HTMLDivElement>(null);
 
-  // Prefill composer from onboarding (?draft=…)
+  // Drop ?draft= from the URL after seeding the composer (no React setState).
   React.useEffect(() => {
-    if (draftApplied.current) return;
-    const draft = searchParams.get("draft");
-    if (!draft) return;
-    draftApplied.current = true;
-    setInput(draft);
-    // Drop the query so refresh does not re-apply after the user clears.
-    if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.delete("draft");
-      window.history.replaceState({}, "", url.pathname + url.search);
-    }
-  }, [searchParams]);
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("draft")) return;
+    url.searchParams.delete("draft");
+    window.history.replaceState({}, "", url.pathname + url.search);
+  }, []);
 
   // ── Autoscroll to the newest message ──
   React.useEffect(() => {
