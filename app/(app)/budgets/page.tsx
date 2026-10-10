@@ -480,14 +480,34 @@ export default function BudgetsPage() {
                   >
                     <SelectValue
                       placeholder={t("transactions.form.categoryPlaceholder")}
-                    />
+                    >
+                      {(() => {
+                        if (!catSelectedId) return undefined;
+                        const selected = availableCategories.find(
+                          (c) => c.id === catSelectedId,
+                        );
+                        if (!selected) return catSelectedId;
+                        return (
+                          <span className="flex items-center gap-2">
+                            <span>{selected.icon}</span>
+                            <span>
+                              {language === "ur"
+                                ? selected.nameUr
+                                : selected.name}
+                            </span>
+                          </span>
+                        );
+                      })()}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent className="bg-white">
                     {availableCategories.map((cat) => (
                       <SelectItem key={cat.id} value={cat.id}>
                         <span className="flex items-center gap-2">
                           <span>{cat.icon}</span>
-                          <span>{cat.nameUr}</span>
+                          <span>
+                            {language === "ur" ? cat.nameUr : cat.name}
+                          </span>
                         </span>
                       </SelectItem>
                     ))}

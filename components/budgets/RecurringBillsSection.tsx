@@ -311,7 +311,25 @@ export function RecurringBillsSection() {
                 >
                   <SelectValue
                     placeholder={t("transactions.form.categoryPlaceholder")}
-                  />
+                  >
+                    {(() => {
+                      if (!draft.categoryId) return undefined;
+                      const selected = expenseCategories.find(
+                        (c) => c.id === draft.categoryId,
+                      );
+                      if (!selected) return draft.categoryId;
+                      return (
+                        <span className="flex items-center gap-2">
+                          <span>{selected.icon}</span>
+                          <span>
+                            {language === "ur"
+                              ? selected.nameUr
+                              : selected.name}
+                          </span>
+                        </span>
+                      );
+                    })()}
+                  </SelectValue>
                 </SelectTrigger>
                 <SelectContent className="bg-white">
                   {expenseCategories.map((cat) => (
