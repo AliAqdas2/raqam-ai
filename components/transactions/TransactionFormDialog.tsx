@@ -70,7 +70,7 @@ export function TransactionFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-lg border-[#E7E2D6] bg-white p-0 shadow-lg">
+      <DialogContent className="sm:max-w-lg max-h-[min(90vh,calc(100dvh-2rem))] flex flex-col gap-0 overflow-hidden border-[#E7E2D6] bg-white p-0 shadow-lg">
         {open && (
           <TransactionFormInner
             key={formKey}
@@ -160,9 +160,12 @@ function TransactionFormInner({
   const labelCls = "text-[13px] font-medium text-[#4C5A52] mb-1.5";
 
   return (
-    <form onSubmit={handleSubmit} className="flex flex-col">
+    <form
+      onSubmit={handleSubmit}
+      className="flex min-h-0 flex-1 flex-col overflow-hidden"
+    >
       {/* Header */}
-      <DialogHeader className="border-b border-[#E7E2D6] bg-[#FBF9F4] px-6 py-4">
+      <DialogHeader className="shrink-0 border-b border-[#E7E2D6] bg-[#FBF9F4] px-6 py-4">
         <DialogTitle className="text-[20px] font-bold text-[#14231B]">
           {isEdit
             ? t("transactions.form.editTitle")
@@ -176,7 +179,7 @@ function TransactionFormInner({
       </DialogHeader>
 
       {/* Body */}
-      <div className="flex flex-col gap-4 px-6 py-5">
+      <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-6 py-5">
         {/* Amount first */}
         <div className="flex flex-col gap-1.5">
           <Label className={labelCls}>{t("transactions.form.amount")}</Label>
@@ -315,7 +318,7 @@ function TransactionFormInner({
       </div>
 
       {/* Footer */}
-      <DialogFooter className="flex-row gap-2.5 border-t border-[#E7E2D6] bg-[#FBF9F4] px-6 py-4">
+      <DialogFooter className="mx-0 mb-0 shrink-0 flex-row gap-2.5 border-t border-[#E7E2D6] bg-[#FBF9F4] px-6 py-4">
         <Button
           type="button"
           variant="outline"
