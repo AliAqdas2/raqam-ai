@@ -1,6 +1,6 @@
 # AGENTS.md — Urdu AI Financial Literacy & Budgeting Platform
 
-> **Bano Qabil AI Hackathon — Persistent Operating Specification for AI Coding Agents**
+> **Raqam-AI — Persistent Operating Specification for AI Coding Agents**
 
 This document is the authoritative operating specification for every AI coding agent that works on this repository. Read the entire document before touching any file. Return to it after every phase to verify your work against the exit criteria.
 
@@ -31,8 +31,6 @@ This document is the authoritative operating specification for every AI coding a
 ## 1. Project Overview
 
 **Product name:** Raqam-AI
-
-**Hackathon:** Bano Qabil AI Hackathon
 
 **Core problem:**
 

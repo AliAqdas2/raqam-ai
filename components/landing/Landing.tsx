@@ -58,7 +58,7 @@ const COPY = {
     wontLabel: "کبھی نہیں",
     finalTitle: "آج ہی رقم سے پہلی بات کریں",
     finalBody: "اکاؤنٹ بنانے میں ایک منٹ لگتا ہے۔ پہلا سوال اردو میں پوچھیں۔",
-    footer: "رقم، Bano Qabil AI Hackathon کے لیے بنایا گیا",
+    footer: "رقم، اردو میں آپ کا مالی معاون",
     langToggle: "English",
   },
   en: {
@@ -107,7 +107,7 @@ const COPY = {
     wontLabel: "Never",
     finalTitle: "Have your first money conversation today",
     finalBody: "Creating an account takes a minute. Ask your first question in Urdu.",
-    footer: "Raqam, built for the Bano Qabil AI Hackathon",
+    footer: "Raqam, your money assistant in Urdu",
     langToggle: "اردو",
   },
 } as const;
