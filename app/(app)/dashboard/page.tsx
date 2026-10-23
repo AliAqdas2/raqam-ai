@@ -21,6 +21,9 @@ import {
 } from "@/components/transactions/TransactionFormDialog";
 import { ProactiveAlerts } from "@/components/dashboard/ProactiveAlerts";
 import { HeroStat } from "@/components/dashboard/HeroStat";
+import { AskRaqam } from "@/components/dashboard/AskRaqam";
+import { TrendChart } from "@/components/dashboard/TrendChart";
+import { useMonthlyTrend } from "@/hooks/useMonthlyTrend";
 import { BudgetProgressBar } from "@/components/budgets/BudgetProgressBar";
 import { formatPKR } from "@/lib/i18n/format";
 
@@ -39,6 +42,7 @@ export default function DashboardPage() {
   const { budgetCategories, loading: budgetLoading } = useBudgets();
   const { createTransaction } = useTransactions();
   const { categories } = useCategories();
+  const { trend, loading: trendLoading } = useMonthlyTrend(6);
   const { t, language } = useLanguage();
 
   const [formOpen, setFormOpen] = React.useState(false);
@@ -79,9 +83,14 @@ export default function DashboardPage() {
 
   return (
     <div className="flex flex-col">
-      <DashboardHeader onAddTransaction={openAddTransaction} />
+      <div className="flex flex-col gap-[22px] px-4 pb-12 pt-5 sm:px-10 sm:pt-7">
+        {/* AI-first: the assistant is the front door to the dashboard */}
+        <AskRaqam
+          summary={summary}
+          budgets={budgetCategories}
+          onAddTransaction={openAddTransaction}
+        />
 
-      <div className="flex flex-col gap-[22px] px-6 pb-12 pt-7 sm:px-10">
         <ProactiveAlerts />
 
         {isEmpty ? (
@@ -190,9 +199,11 @@ export default function DashboardPage() {
                   <h2 className="text-[18px] font-bold">
                     {t("dashboard.sixMonthTrend")}
                   </h2>
-                  <p className="text-[13px] leading-[1.9] text-[#6B7A70]">
-                    {t("dashboard.trendUnavailable")}
-                  </p>
+                  {trendLoading ? (
+                    <div className="h-[150px] animate-pulse rounded-[12px] bg-[#F1EEE4]" />
+                  ) : (
+                    <TrendChart points={trend} />
+                  )}
                 </div>
 
                 {!summaryLoading && upcomingBills.length > 0 && (
@@ -352,40 +363,5 @@ export default function DashboardPage() {
         onSubmit={handleFormSubmit}
       />
     </div>
-  );
-}
-
-/* ── Shared header ── */
-function DashboardHeader({
-  onAddTransaction,
-}: {
-  onAddTransaction: () => void;
-}) {
-  const { t } = useLanguage();
-
-  return (
-    <header className="sticky top-0 z-[5] flex items-center justify-between gap-5 border-b border-[#E7E2D6] bg-white px-6 py-[26px] sm:px-10">
-      <div className="flex flex-col gap-1">
-        <h1 className="text-[26px] font-bold leading-[1.7]">
-          {t("dashboard.welcome")}
-        </h1>
-        <p className="text-[14px] text-[#6B7A70]">{t("dashboard.subtitle")}</p>
-      </div>
-      <div className="flex items-center gap-2.5">
-        <Link
-          href="/transactions"
-          className="hidden rounded-[10px] border border-[#E7E2D6] bg-[#F1EEE4] px-3.5 py-[9px] text-[14px] sm:block"
-        >
-          {t("dashboard.viewTransactions")}
-        </Link>
-        <button
-          type="button"
-          onClick={onAddTransaction}
-          className="rounded-[10px] border-0 bg-[#0F5132] px-[18px] py-[11px] text-[14px] text-white hover:bg-[#14231B]"
-        >
-          {t("dashboard.newTransaction")}
-        </button>
-      </div>
-    </header>
   );
 }

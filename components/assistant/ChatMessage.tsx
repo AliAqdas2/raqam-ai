@@ -4,6 +4,8 @@ import { motion } from "framer-motion";
 import { useLanguage } from "@/components/LanguageProvider";
 import { MarkdownMessage } from "@/components/assistant/MarkdownMessage";
 import { AssistantAvatar } from "@/components/assistant/AssistantAvatar";
+import { SpeakButton } from "@/components/assistant/SpeakButton";
+import type { SpeechStatus } from "@/hooks/useTextToSpeech";
 import { cn, isLatinScript } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/ur";
 import type { ChatMessage as ChatMessageType } from "@/hooks/useAssistant";
@@ -16,9 +18,17 @@ const INTENT_STYLES: Record<
   analyze: { bg: "#E6EFE9", text: "#0F5132", key: "assistant.intentAnalyze" },
   recommend: { bg: "#FDF3D8", text: "#6B5B2E", key: "assistant.intentRecommend" },
   act: { bg: "#FDF3D8", text: "#6B5B2E", key: "assistant.intentAct" },
+  offTopic: { bg: "#F1EEE4", text: "#4C5A52", key: "assistant.intentOffTopic" },
 };
 
-export function ChatMessage({ message }: { message: ChatMessageType }) {
+export function ChatMessage({
+  message,
+  speech,
+}: {
+  message: ChatMessageType;
+  /** Read-aloud control for assistant replies. */
+  speech?: { status: SpeechStatus; onToggle: () => void };
+}) {
   const { t } = useLanguage();
   const latin = isLatinScript(message.content);
 
@@ -83,6 +93,13 @@ export function ChatMessage({ message }: { message: ChatMessageType }) {
         >
           <MarkdownMessage content={message.content} />
         </div>
+        {speech ? (
+          <SpeakButton
+            status={speech.status}
+            onToggle={speech.onToggle}
+            className="-ms-1 self-start"
+          />
+        ) : null}
       </div>
       <AssistantAvatar className="mt-1.5" />
     </motion.div>

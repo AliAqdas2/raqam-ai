@@ -9,7 +9,13 @@ import type { ActionType } from "@/lib/ai/action-schemas";
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
 export type MessageRole = "user" | "assistant";
-export type IntentType = "educate" | "analyze" | "recommend" | "act";
+export type IntentType =
+  | "educate"
+  | "analyze"
+  | "recommend"
+  | "act"
+  /** Blocked by the input relevance guardrail (lib/ai/guardrail.ts). */
+  | "offTopic";
 export type InputMode = "text" | "voice" | "receipt";
 
 export interface ChatMessage {
@@ -30,6 +36,19 @@ export interface Conversation {
 
 // ─── Hook return type ────────────────────────────────────────────────────────────
 
+/** What the AI pipeline returned for one message (see lib/ai/orchestrator.ts). */
+export interface AssistantReply {
+  content: string;
+  intentType: IntentType;
+  /** True when the reply proposed an action awaiting confirmation. */
+  proposedAction: boolean;
+}
+
+export interface SendMessageOptions {
+  /** Start a fresh conversation for this message (e.g. a dashboard query). */
+  newConversation?: boolean;
+}
+
 export interface PendingActionData {
   id: string;
   actionType: ActionType;
@@ -47,7 +66,12 @@ export interface UseAssistantReturn {
   loading: boolean;
   sending: boolean;
   error: Error | null;
-  sendMessage: (content: string, mode?: InputMode) => Promise<void>;
+  /** Resolves with the assistant reply, or null if sending failed. */
+  sendMessage: (
+    content: string,
+    mode?: InputMode,
+    options?: SendMessageOptions,
+  ) => Promise<AssistantReply | null>;
   startNewConversation: () => Promise<void>;
   switchConversation: (id: string) => void;
   deleteConversation: (id: string) => Promise<void>;
@@ -210,8 +234,12 @@ export function useAssistant(): UseAssistantReturn {
 
   // Send message
   const sendMessage = React.useCallback(
-    async (content: string, mode?: InputMode): Promise<void> => {
-      if (!content.trim()) return;
+    async (
+      content: string,
+      mode?: InputMode,
+      options: SendMessageOptions = {},
+    ): Promise<AssistantReply | null> => {
+      if (!content.trim()) return null;
 
       // Show the user's message immediately (optimistic update)
       const optimisticMsg: ChatMessage = {
@@ -227,7 +255,7 @@ export function useAssistant(): UseAssistantReturn {
       setError(null);
 
       try {
-        let convId = effectiveConversationId;
+        let convId = options.newConversation ? null : effectiveConversationId;
 
         // Create conversation if needed
         if (!convId) {
@@ -244,6 +272,11 @@ export function useAssistant(): UseAssistantReturn {
         // Soft failures come back as a friendly in-chat message with the real
         // error attached — surface it to the console for debugging.
         if (result?.error) console.warn("[assistant]", result.error);
+        return {
+          content: result?.content ?? "",
+          intentType: result?.intentType ?? "educate",
+          proposedAction: Boolean(result?.pendingAction?.userFacingMessage),
+        };
       } catch (err) {
         setError(
           err instanceof Error ? err : new Error("Failed to send message"),
@@ -252,6 +285,7 @@ export function useAssistant(): UseAssistantReturn {
         setOptimisticMessages((prev) =>
           prev.filter((m) => m.id !== optimisticMsg.id),
         );
+        return null;
       } finally {
         setSending(false);
       }

@@ -26,10 +26,12 @@ const notoSansArabic = Noto_Sans_Arabic({
   display: "swap",
 });
 
+// Variable font (200–800): one file instead of five static weights. Listing
+// explicit weights also tripped a Turbopack dev font-loader error
+// ("next/font/google queries have exactly one entry").
 const manrope = Manrope({
   variable: "--font-manrope",
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700", "800"],
   display: "swap",
 });
 
