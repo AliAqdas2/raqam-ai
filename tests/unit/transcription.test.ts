@@ -3,6 +3,7 @@ import {
   transcribeWithAssemblyAI,
   transcribeAudioChain,
   base64ToBytes,
+  containsDevanagari,
   ASSEMBLYAI_SPEECH_MODEL,
 } from "@/lib/ai/transcription";
 
@@ -64,6 +65,11 @@ describe("transcribeWithAssemblyAI", () => {
     const body = JSON.parse(String(submit!.init!.body));
     expect(body.speech_models).toEqual([ASSEMBLYAI_SPEECH_MODEL]);
     expect(body.language_detection).toBe(true);
+    // Detection is limited to Urdu + English so Urdu is never labelled Hindi.
+    expect(body.language_detection_options).toEqual({
+      expected_languages: ["ur", "en"],
+      fallback_language: "ur",
+    });
     expect(body.audio_url).toBe("https://cdn.assemblyai.com/x");
 
     // Raw API key in the Authorization header — no "Bearer" prefix.
@@ -229,5 +235,43 @@ describe("base64ToBytes", () => {
   it("round-trips ASCII bytes", () => {
     const bytes = base64ToBytes(Buffer.from("abc").toString("base64"));
     expect(Array.from(bytes)).toEqual([97, 98, 99]);
+  });
+});
+
+describe("Hindi script is never accepted", () => {
+  const HINDI = "आज पाँच सौ रुपये खर्च हुए";
+  const URDU = "آج پانچ سو روپے خرچ ہوئے";
+
+  it("containsDevanagari tells the scripts apart", () => {
+    expect(containsDevanagari(HINDI)).toBe(true);
+    expect(containsDevanagari(URDU)).toBe(false);
+    expect(containsDevanagari("aaj 500 rupay kharch huay")).toBe(false);
+    expect(containsDevanagari(`${URDU} budget`)).toBe(false);
+  });
+
+  it("falls through to Gemini when AssemblyAI returns Devanagari", async () => {
+    const res = await transcribeAudioChain(
+      { audioBase64: "AQID", mimeType: "audio/wav" },
+      {
+        transcribeAssemblyAI: async () => HINDI,
+        transcribeGemini: async () => URDU,
+        onProviderError: () => {},
+      },
+    );
+    expect(res).toEqual({ transcript: URDU, provider: "gemini", error: null });
+  });
+
+  it("returns no transcript rather than Hindi when every provider writes Devanagari", async () => {
+    const res = await transcribeAudioChain(
+      { audioBase64: "AQID", mimeType: "audio/wav" },
+      {
+        transcribeAssemblyAI: async () => HINDI,
+        transcribeGemini: async () => HINDI,
+        onProviderError: () => {},
+      },
+    );
+    expect(res.transcript).toBe("");
+    expect(res.provider).toBeNull();
+    expect(res.error).toContain("Hindi-script transcript rejected");
   });
 });

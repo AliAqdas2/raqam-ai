@@ -17,7 +17,10 @@
 import * as React from "react";
 import { useAction } from "convex/react";
 import { api } from "../convex/_generated/api";
-import type { TranscriptProvider } from "@/lib/ai/transcription";
+import {
+  containsDevanagari,
+  type TranscriptProvider,
+} from "@/lib/ai/transcription";
 import {
   TARGET_SAMPLE_RATE,
   encodeWav,
@@ -401,7 +404,7 @@ export function useVoiceInput(
           | undefined;
 
         const serverText = (res?.transcript ?? "").trim();
-        if (serverText) {
+        if (serverText && !containsDevanagari(serverText)) {
           settle({
             transcript: serverText,
             provider: (res?.provider as TranscriptProvider) ?? "assemblyai",
@@ -447,13 +450,19 @@ export function useVoiceInput(
         if (result.isFinal) final += result[0].transcript;
         else interim += result[0].transcript;
       }
-      if (final) webSpeechFinalRef.current += final;
-      setInterimTranscript(interim);
+      // Never surface Hindi script: if the browser heard Urdu as Hindi, that
+      // text is dropped and the server transcript is used instead.
+      if (final && !containsDevanagari(final)) webSpeechFinalRef.current += final;
+      setInterimTranscript(containsDevanagari(interim) ? "" : interim);
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       if (event.error === "not-allowed") {
-        setError("mic-denied");
+        if (!usingRecorderRef.current && !settledRef.current) {
+          settle({ transcript: "", provider: null, error: "mic-denied" });
+        } else {
+          setError("mic-denied");
+        }
       }
       // network / no-speech / service-not-allowed / aborted are non-fatal here —
       // the server path is primary and handles the final outcome.
@@ -540,13 +549,13 @@ export function useVoiceInput(
         usingRecorderRef.current = false;
         const name = (err as Error | undefined)?.name;
         if (name === "NotAllowedError" || name === "SecurityError") {
-          setError("mic-denied");
-          setIsListening(false);
           try {
             recognitionRef.current?.abort();
           } catch {
             // ignore
           }
+          // Settle so waitForResult() resolves now instead of after 30 s.
+          settle({ transcript: "", provider: null, error: "mic-denied" });
           return;
         }
         // Otherwise fall through to the Web-Speech-only path.
@@ -554,10 +563,9 @@ export function useVoiceInput(
     }
 
     if (!recognitionRef.current) {
-      setError("not-supported");
-      setIsListening(false);
+      settle({ transcript: "", provider: null, error: "not-supported" });
     }
-  }, [resetInternal, recorderSupported, stopStream, startMeter]);
+  }, [resetInternal, recorderSupported, stopStream, startMeter, settle]);
 
   const stopListening = React.useCallback(() => {
     // Stop the VAD first so it cannot fire stop twice.

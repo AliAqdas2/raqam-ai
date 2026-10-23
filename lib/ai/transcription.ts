@@ -16,7 +16,21 @@ export const ASSEMBLYAI_BASE_URL = "https://api.assemblyai.com";
 /** Cheapest AssemblyAI speech model — and the only one that supports Urdu. */
 export const ASSEMBLYAI_SPEECH_MODEL = "universal-2";
 
+/**
+ * Spoken Urdu and Hindi sound almost the same, so unconstrained language
+ * detection often labels Urdu speech as Hindi and writes it in Devanagari.
+ * Detection is limited to the two languages the app supports, and anything
+ * the model is unsure about is transcribed as Urdu.
+ */
+export const ASSEMBLYAI_EXPECTED_LANGUAGES = ["ur", "en"] as const;
+export const ASSEMBLYAI_FALLBACK_LANGUAGE = "ur";
+
 export type TranscriptProvider = "assemblyai" | "gemini" | "browser";
+
+/** True when the text contains Devanagari (Hindi script) letters. */
+export function containsDevanagari(text: string): boolean {
+  return /[\u0900-\u097F\uA8E0-\uA8FF]/.test(text);
+}
 
 export interface TranscriptionResult {
   transcript: string;
@@ -32,9 +46,12 @@ export interface AssemblyAITranscribeOptions {
   audio: Uint8Array;
   /** Ask AssemblyAI to auto-detect the spoken language. Default true. */
   languageDetection?: boolean;
-  /** Poll interval while the job runs. Default 3000ms. */
+  /** Poll interval while the job runs. Default 1000ms. */
   pollIntervalMs?: number;
-  /** Give up after this long and throw. Default 45000ms. */
+  /**
+   * Give up after this long and throw. Default 20000ms: short enough that the
+   * Gemini fallback still fits inside the client's 30 s wait (useVoiceInput).
+   */
   timeoutMs?: number;
   /** Injectable fetch (defaults to the global). */
   fetchImpl?: typeof fetch;
@@ -85,8 +102,8 @@ export async function transcribeWithAssemblyAI(
     apiKey,
     audio,
     languageDetection = true,
-    pollIntervalMs = 3000,
-    timeoutMs = 45000,
+    pollIntervalMs = 1000,
+    timeoutMs = 20000,
     fetchImpl = fetch,
     now = Date.now,
     sleep = defaultSleep,
@@ -124,6 +141,14 @@ export async function transcribeWithAssemblyAI(
       audio_url: uploaded.upload_url,
       speech_models: [ASSEMBLYAI_SPEECH_MODEL],
       language_detection: languageDetection,
+      ...(languageDetection
+        ? {
+            language_detection_options: {
+              expected_languages: [...ASSEMBLYAI_EXPECTED_LANGUAGES],
+              fallback_language: ASSEMBLYAI_FALLBACK_LANGUAGE,
+            },
+          }
+        : { language_code: ASSEMBLYAI_FALLBACK_LANGUAGE }),
     }),
   });
   if (!submitRes.ok) {
@@ -191,7 +216,8 @@ function errMsg(err: unknown): string {
 
 /**
  * Run the AssemblyAI → Gemini chain. The first provider to return a non-empty
- * transcript wins. When both are unavailable / empty / failing, returns
+ * transcript wins. A transcript in Devanagari (Hindi script) is never
+ * accepted: it counts as a failure and the next provider is tried. When both are unavailable / empty / failing, returns
  * `provider: null` so the caller can fall back to the browser Web Speech API.
  */
 export async function transcribeAudioChain(
@@ -217,8 +243,12 @@ export async function transcribeAudioChain(
     try {
       const bytes = base64ToBytes(input.audioBase64);
       const text = (await deps.transcribeAssemblyAI(bytes)).trim();
-      if (text) return { transcript: text, provider: "assemblyai", error: null };
-      errors.push("assemblyai: empty transcript");
+      if (text && !containsDevanagari(text)) {
+        return { transcript: text, provider: "assemblyai", error: null };
+      }
+      errors.push(
+        text ? "assemblyai: Hindi-script transcript rejected" : "assemblyai: empty transcript",
+      );
     } catch (err) {
       log("assemblyai", err);
       errors.push(`assemblyai: ${errMsg(err)}`);
@@ -231,8 +261,12 @@ export async function transcribeAudioChain(
       const text = (
         await deps.transcribeGemini(input.audioBase64, input.mimeType)
       ).trim();
-      if (text) return { transcript: text, provider: "gemini", error: null };
-      errors.push("gemini: empty transcript");
+      if (text && !containsDevanagari(text)) {
+        return { transcript: text, provider: "gemini", error: null };
+      }
+      errors.push(
+        text ? "gemini: Hindi-script transcript rejected" : "gemini: empty transcript",
+      );
     } catch (err) {
       log("gemini", err);
       errors.push(`gemini: ${errMsg(err)}`);

@@ -155,7 +155,7 @@ export const transcribeAudio = action({
                     {
                       parts: [
                         {
-                          text: `Transcribe the following audio recording to text. The speech may be in Urdu or English. Return ONLY the transcribed text, nothing else. If the audio is unclear or silent, return an empty string.`,
+                          text: `Transcribe the following audio recording to text. The speech is in Urdu or English (often mixed). Urdu speech MUST be written in Urdu script (Perso-Arabic, as in اردو). Never use Devanagari or Hindi script, even if the speech sounds like Hindi. English words may stay in English. Return ONLY the transcribed text, nothing else. If the audio is unclear or silent, return an empty string.`,
                         },
                         {
                           inline_data: {
