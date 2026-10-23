@@ -131,7 +131,7 @@ function TurnView({
   if (turn.role === "card" && turn.card) {
     return (
       <div
-        className="max-w-[90%] self-end rounded-[16px] border border-[#E8B931]/50 bg-[#FDF8EC] px-4 py-3"
+        className="max-w-[90%] self-end rounded-[16px] border border-[#E8B931]/60 bg-white px-4 py-3 shadow-[0_6px_20px_-12px_rgba(11,59,38,0.35)]"
         style={{ animation: "lp-pop .4s ease-out both" }}
       >
         <p
@@ -145,7 +145,7 @@ function TurnView({
         >
           {L.proposed}
         </p>
-        <p className="font-[var(--font-manrope)] text-[22px] font-extrabold tracking-[-.02em] text-[#0F5132]">
+        <p className="font-manrope text-[22px] font-extrabold tracking-[-.02em] text-[#0F5132]">
           {turn.card.amount}
         </p>
         <p className="mt-1 text-[13px] text-[#4C5A52]">{turn.card.category}</p>
@@ -164,14 +164,14 @@ function TurnView({
   const isUser = turn.role === "user";
   return (
     <div
-      className={`max-w-[90%] ${isUser ? "self-end" : "self-start"}`}
+      className={`max-w-[88%] ${isUser ? "self-start" : "self-end"}`}
       style={{ animation: "lp-pop .4s ease-out both" }}
     >
       <div
         className={
           isUser
-            ? "rounded-[16px] bg-[#E8B931] px-4 py-2.5 text-[14px] font-medium leading-[1.9] text-[#0B3B26]"
-            : "rounded-[16px] bg-white/95 px-4 py-2.5 font-reading text-[14px] leading-[1.9] text-[#14231B] shadow-sm"
+            ? "rounded-[16px_16px_16px_4px] bg-[#0F5132] px-4 py-2.5 text-[14px] leading-[1.9] text-[#EAF1EB]"
+            : `rounded-[16px_16px_4px_16px] border border-[#E7E2D6] bg-white px-4 py-2.5 text-[14px] text-[#14231B] ${lang === "ur" ? "font-reading leading-[1.9]" : "leading-[1.6]"}`
         }
       >
         {turn.text}
@@ -182,7 +182,7 @@ function TurnView({
 
 function TypingDots() {
   return (
-    <div className="self-start rounded-[16px] bg-white/95 px-4 py-3 shadow-sm">
+    <div className="self-end rounded-[16px] border border-[#E7E2D6] bg-white px-4 py-3">
       <div className="flex gap-1">
         {[0, 1, 2].map((i) => (
           <span
