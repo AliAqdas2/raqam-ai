@@ -29,7 +29,7 @@ import {
   ActionExtraction,
   type ActionExtractionResult,
 } from "./action-schemas";
-import { GUARDRAIL_MODEL, PRIMARY_MODEL } from "./models";
+import { GUARDRAIL_MODEL, PRIMARY_MODEL, TEXT_MODELS } from "./models";
 import {
   buildGuardrailReply,
   createAgentClassifier,
@@ -43,6 +43,26 @@ import {
 
 /** Primary model from centralized config. Swap in lib/ai/models.ts. */
 const MODEL = PRIMARY_MODEL;
+
+/**
+ * Models to run the agents on, in order. Each Gemini model has its own
+ * free-tier quota (a few requests per minute), so when one is rate limited
+ * the turn is retried on the next. The guardrail's model goes last because
+ * it already spends that model's quota on every message.
+ */
+const AGENT_MODELS: readonly string[] = [
+  MODEL,
+  ...TEXT_MODELS.filter((m) => m !== MODEL && m !== GUARDRAIL_MODEL),
+  ...(GUARDRAIL_MODEL !== MODEL ? [GUARDRAIL_MODEL] : []),
+];
+
+/** Rate limits, overload and missing models are worth retrying elsewhere. */
+export function isRetryableModelError(err: unknown): boolean {
+  const e = err as { status?: number; message?: string } | null;
+  if (e?.status && [404, 429, 500, 503].includes(e.status)) return true;
+  const msg = err instanceof Error ? err.message : String(err);
+  return /\b(429|503|RESOURCE_EXHAUSTED|UNAVAILABLE|overloaded)\b/i.test(msg);
+}
 
 setTracingDisabled(true);
 setOpenAIAPI("chat_completions");
@@ -332,22 +352,40 @@ export async function orchestrate(
       preferredLanguage: input.preferredLanguage,
       financialContext: financialContextStr,
     };
-    const triageAgent = buildAgents(
-      deps.model ?? MODEL,
-      deps.classifier ?? createAgentClassifier(deps.model ?? GUARDRAIL_MODEL),
-    );
+    const classify =
+      deps.classifier ?? createAgentClassifier(deps.model ?? GUARDRAIL_MODEL);
 
     // 5. Run the multi-agent pipeline. The Runner uses the default provider,
     //    which is the Gemini-backed OpenAI client configured at module load.
+    //    A rate-limited model falls through to the next one (AGENT_MODELS).
+    const models: ReadonlyArray<string | Model> = deps.model
+      ? [deps.model]
+      : AGENT_MODELS;
     const runner = new Runner({ tracingDisabled: true });
-    const result = await runner.run(
-      triageAgent,
-      [...history, { role: "user" as const, content: input.userMessage }],
-      {
-        context: agentContext,
-        maxTurns: 5,
-      },
-    );
+    let result:
+      | { lastAgent?: { name: string }; finalOutput?: string }
+      | undefined;
+    for (let i = 0; i < models.length; i++) {
+      try {
+        result = await runner.run(
+          buildAgents(models[i], classify),
+          [...history, { role: "user" as const, content: input.userMessage }],
+          {
+            context: agentContext,
+            maxTurns: 5,
+          },
+        );
+        break;
+      } catch (err) {
+        const last = i === models.length - 1;
+        if (last || err instanceof InputGuardrailTripwireTriggered) throw err;
+        if (!isRetryableModelError(err)) throw err;
+        console.warn(
+          `[orchestrator] ${String(models[i])} unavailable, trying ${String(models[i + 1])}`,
+        );
+      }
+    }
+    if (!result) throw new Error("No agent model produced a result");
 
     // 6. Determine which specialist handled the response
     const intentType = result.lastAgent

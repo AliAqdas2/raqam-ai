@@ -10,7 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { Usage } from "@openai/agents";
 import type { Model, ModelRequest, ModelResponse } from "@openai/agents";
-import { orchestrate } from "@/lib/ai/orchestrator";
+import { orchestrate, isRetryableModelError } from "@/lib/ai/orchestrator";
 import { buildGuardrailReply } from "@/lib/ai/guardrail";
 
 type AgentKind = "guardrail" | "triage" | "education" | "analyze" | "action";
@@ -391,5 +391,18 @@ describe("agent workflow — failures", () => {
 
     const en = await run(model, "make a budget", { preferredLanguage: "en" });
     expect(en.content).toMatch(/^Sorry/);
+  });
+});
+
+describe("isRetryableModelError", () => {
+  it("retries rate limits and outages on another model", () => {
+    expect(isRetryableModelError(Object.assign(new Error("x"), { status: 429 }))).toBe(true);
+    expect(isRetryableModelError(new Error('429 [{"error":{"status":"RESOURCE_EXHAUSTED"}}]'))).toBe(true);
+    expect(isRetryableModelError(new Error("503 The model is overloaded"))).toBe(true);
+  });
+
+  it("does not retry auth or request errors", () => {
+    expect(isRetryableModelError(Object.assign(new Error("x"), { status: 401 }))).toBe(false);
+    expect(isRetryableModelError(new Error("400 invalid argument"))).toBe(false);
   });
 });
