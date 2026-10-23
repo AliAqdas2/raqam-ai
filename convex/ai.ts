@@ -20,6 +20,10 @@ import {
   transcribeAudioChain,
   transcribeWithAssemblyAI,
 } from "@/lib/ai/transcription";
+import {
+  synthesizeSpeechChain,
+  synthesizeWithAzure,
+} from "@/lib/ai/tts";
 
 /**
  * The main AI pipeline action. Called from the client hook.
@@ -173,6 +177,48 @@ export const transcribeAudio = action({
     );
 
     return result;
+  },
+});
+
+/**
+ * Text-to-speech — the assistant's voice. Runs the provider chain in
+ * `lib/ai/tts.ts` (Azure AI Speech neural voices). Returns base64 MP3, or
+ * `provider: null` so `hooks/useTextToSpeech.ts` falls back to the browser's
+ * speechSynthesis.
+ *
+ * Unlike transcription, this requires a signed-in caller: synthesis is billed
+ * per character, so the endpoint must not be callable anonymously.
+ */
+export const synthesizeSpeech = action({
+  args: {
+    text: v.string(),
+    preferredLanguage: v.union(v.literal("ur"), v.literal("en")),
+    gender: v.optional(v.union(v.literal("female"), v.literal("male"))),
+    rate: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) throw new Error("Not authenticated");
+
+    const apiKey = process.env.AZURE_SPEECH_KEY;
+    const region = process.env.AZURE_SPEECH_REGION;
+
+    return await synthesizeSpeechChain(
+      {
+        text: args.text,
+        preferredLanguage: args.preferredLanguage,
+        gender: args.gender,
+        rate: args.rate,
+      },
+      {
+        synthesizeAzure:
+          apiKey && region
+            ? (ssml) => synthesizeWithAzure({ apiKey, region, ssml })
+            : undefined,
+        onProviderError: (provider, err) =>
+          console.error(`Speech synthesis — ${provider} failed:`, err),
+      },
+    );
   },
 });
 

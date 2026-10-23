@@ -119,6 +119,47 @@ export interface UseVoiceInputReturn {
   error: VoiceErrorCode | null;
   /** Whether the browser can capture voice at all. */
   supported: boolean;
+  /** Current microphone loudness, 0…1 (0 when not recording). */
+  getInputLevel: () => number;
+}
+
+export interface VoiceInputOptions {
+  /**
+   * Stop recording automatically once the speaker goes quiet — used by the
+   * hands-free voice call. Omit for push-to-talk (the chat composer).
+   */
+  autoStop?: {
+    /** Silence after speech that ends the turn. */
+    silenceMs: number;
+    /** Give up if no speech starts within this long. */
+    noSpeechMs: number;
+    /** Hard cap on one recording. */
+    maxMs: number;
+  };
+}
+
+/**
+ * Pure end-of-speech decision for the voice-activity detector, exported for
+ * unit tests. Times are in ms since recording started.
+ */
+export function shouldAutoStop(
+  state: { elapsed: number; heardSpeech: boolean; lastSpeechAt: number },
+  cfg: NonNullable<VoiceInputOptions["autoStop"]>,
+): boolean {
+  if (state.elapsed >= cfg.maxMs) return true;
+  if (!state.heardSpeech) return state.elapsed >= cfg.noSpeechMs;
+  return state.elapsed - state.lastSpeechAt >= cfg.silenceMs;
+}
+
+/** RMS of a time-domain byte buffer (128 = silence), normalised to 0…1. */
+export function rmsLevel(buf: Uint8Array): number {
+  if (buf.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < buf.length; i++) {
+    const v = (buf[i] - 128) / 128;
+    sum += v * v;
+  }
+  return Math.sqrt(sum / buf.length);
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────────
@@ -177,7 +218,11 @@ async function blobToWavBase64(
 
 // ─── Hook ──────────────────────────────────────────────────────────────────────
 
-export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
+export function useVoiceInput(
+  lang: string = "ur-PK",
+  options: VoiceInputOptions = {},
+): UseVoiceInputReturn {
+  const autoStop = options.autoStop;
   const [isListening, setIsListening] = React.useState(false);
   const [processing, setProcessing] = React.useState(false);
   const [transcript, setTranscript] = React.useState("");
@@ -203,6 +248,15 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
   const webSpeechFinalRef = React.useRef("");
   // true once the MediaRecorder path is running for this session
   const usingRecorderRef = React.useRef(false);
+  // Level meter + voice-activity detection
+  const meterCtxRef = React.useRef<AudioContext | null>(null);
+  const meterAnalyserRef = React.useRef<AnalyserNode | null>(null);
+  const meterBufRef = React.useRef<Uint8Array<ArrayBuffer> | null>(null);
+  const vadTimerRef = React.useRef<number | null>(null);
+  // With autoStop: did the VAD hear any speech this recording? If not, the
+  // recording is discarded without a (billed) transcription call.
+  const vadHeardSpeechRef = React.useRef<boolean | null>(null);
+  const stopListeningRef = React.useRef<() => void>(() => {});
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const transcribeAudio = useAction((api as any).ai.transcribeAudio);
@@ -232,10 +286,74 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
     setIsListening(false);
   }, []);
 
+  const stopMeter = React.useCallback(() => {
+    if (vadTimerRef.current !== null) {
+      window.clearInterval(vadTimerRef.current);
+      vadTimerRef.current = null;
+    }
+    meterAnalyserRef.current = null;
+    meterBufRef.current = null;
+    void meterCtxRef.current?.close().catch(() => {});
+    meterCtxRef.current = null;
+  }, []);
+
   const stopStream = React.useCallback(() => {
+    stopMeter();
     mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
     mediaStreamRef.current = null;
-  }, []);
+  }, [stopMeter]);
+
+  /** Attach a level meter to the mic stream; with autoStop, also run the VAD. */
+  const startMeter = React.useCallback(
+    (stream: MediaStream) => {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      try {
+        const ctx = new Ctx();
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        ctx.createMediaStreamSource(stream).connect(analyser);
+        meterCtxRef.current = ctx;
+        meterAnalyserRef.current = analyser;
+        meterBufRef.current = new Uint8Array(analyser.fftSize);
+      } catch {
+        return;
+      }
+      if (!autoStop) return;
+
+      // Adaptive threshold: estimate the room noise floor during the first
+      // 300 ms, then treat anything clearly above it as speech.
+      const startedAt = performance.now();
+      let noiseFloor = 0.01;
+      let calibrationFrames = 0;
+      let heardSpeech = false;
+      vadHeardSpeechRef.current = false;
+      let lastSpeechAt = 0;
+      vadTimerRef.current = window.setInterval(() => {
+        const analyser = meterAnalyserRef.current;
+        const buf = meterBufRef.current;
+        if (!analyser || !buf) return;
+        analyser.getByteTimeDomainData(buf);
+        const level = rmsLevel(buf);
+        const elapsed = performance.now() - startedAt;
+
+        if (elapsed < 300) {
+          calibrationFrames++;
+          noiseFloor += (level - noiseFloor) / calibrationFrames;
+          return;
+        }
+        if (level > Math.max(0.03, noiseFloor * 2.5)) {
+          heardSpeech = true;
+          vadHeardSpeechRef.current = true;
+          lastSpeechAt = elapsed;
+        }
+        if (shouldAutoStop({ elapsed, heardSpeech, lastSpeechAt }, autoStop)) {
+          stopListeningRef.current();
+        }
+      }, 80);
+    },
+    [autoStop],
+  );
 
   // ─── Transcribe the recorded blob (server chain, Web Speech fallback) ───────
 
@@ -248,6 +366,8 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
       audioChunksRef.current = [];
 
       const webSpeechText = webSpeechFinalRef.current.trim();
+      const vadHeardSpeech = vadHeardSpeechRef.current;
+      vadHeardSpeechRef.current = null;
 
       const fallBackToWebSpeech = (): boolean => {
         if (webSpeechText) {
@@ -261,7 +381,7 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
         return false;
       };
 
-      if (blob.size === 0) {
+      if (blob.size === 0 || (vadHeardSpeech === false && !webSpeechText)) {
         if (!fallBackToWebSpeech()) {
           settle({ transcript: "", provider: null, error: "no-speech" });
         }
@@ -414,6 +534,7 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
 
         mediaRecorderRef.current = recorder;
         recorder.start();
+        startMeter(stream);
         return;
       } catch (err) {
         usingRecorderRef.current = false;
@@ -436,9 +557,14 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
       setError("not-supported");
       setIsListening(false);
     }
-  }, [resetInternal, recorderSupported, stopStream]);
+  }, [resetInternal, recorderSupported, stopStream, startMeter]);
 
   const stopListening = React.useCallback(() => {
+    // Stop the VAD first so it cannot fire stop twice.
+    if (vadTimerRef.current !== null) {
+      window.clearInterval(vadTimerRef.current);
+      vadTimerRef.current = null;
+    }
     setProcessing(true);
     setIsListening(false);
 
@@ -465,9 +591,21 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
     }
   }, [settle]);
 
+  React.useEffect(() => {
+    stopListeningRef.current = stopListening;
+  }, [stopListening]);
+
   const reset = React.useCallback(() => {
     resetInternal();
   }, [resetInternal]);
+
+  const getInputLevel = React.useCallback((): number => {
+    const analyser = meterAnalyserRef.current;
+    const buf = meterBufRef.current;
+    if (!analyser || !buf) return 0;
+    analyser.getByteTimeDomainData(buf);
+    return Math.min(1, rmsLevel(buf) * 4);
+  }, []);
 
   const waitForResult = React.useCallback((): Promise<VoiceOutcome> => {
     return new Promise((resolve) => {
@@ -496,6 +634,8 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
   // Cleanup on unmount.
   React.useEffect(() => {
     return () => {
+      if (vadTimerRef.current !== null) window.clearInterval(vadTimerRef.current);
+      void meterCtxRef.current?.close().catch(() => {});
       mediaStreamRef.current?.getTracks().forEach((t) => t.stop());
       try {
         mediaRecorderRef.current?.stop();
@@ -517,5 +657,6 @@ export function useVoiceInput(lang: string = "ur-PK"): UseVoiceInputReturn {
     waitForResult,
     error,
     supported,
+    getInputLevel,
   };
 }
