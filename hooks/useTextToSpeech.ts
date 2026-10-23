@@ -16,8 +16,10 @@ import { useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import {
   BROWSER_LOCALES,
+  SYNTHESIS_TIMEOUT_MS,
   detectSpeechLanguage,
   prepareTextForSpeech,
+  speechWatchdogMs,
   type SpeechLanguage,
   type TtsProvider,
 } from "@/lib/ai/tts";
@@ -58,6 +60,23 @@ function silentAudioUrl(): string {
     silentUrl = URL.createObjectURL(new Blob([wav], { type: "audio/wav" }));
   }
   return silentUrl;
+}
+
+/** Resolves with the promise's value, or null once `ms` elapse first. */
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(null), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
 }
 
 function base64ToBlobUrl(base64: string, mimeType: string): string {
@@ -191,7 +210,15 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
       const lang = detectSpeechLanguage(text, preferredLanguage);
 
       return new Promise<void>((resolve) => {
-        finishRef.current = resolve;
+        // Watchdog: however playback ends (or fails to report that it ended),
+        // speak() resolves within a bounded time.
+        const watchdog = window.setTimeout(() => {
+          if (token === tokenRef.current) stop();
+        }, speechWatchdogMs(text));
+        finishRef.current = () => {
+          window.clearTimeout(watchdog);
+          resolve();
+        };
         setActiveId(options.id ?? null);
         setStatus("loading");
 
@@ -201,12 +228,15 @@ export function useTextToSpeech(): UseTextToSpeechReturn {
 
           if (!url) {
             try {
-              const res = (await synthesize({
-                text,
-                preferredLanguage,
-                gender: prefs.gender,
-                rate: prefs.rate,
-              })) as { audioBase64: string; mimeType: string; provider: string | null };
+              const res = (await withTimeout(
+                synthesize({
+                  text,
+                  preferredLanguage,
+                  gender: prefs.gender,
+                  rate: prefs.rate,
+                }),
+                SYNTHESIS_TIMEOUT_MS,
+              )) as { audioBase64: string; mimeType: string; provider: string | null } | null;
               if (res?.provider && res.audioBase64) {
                 url = base64ToBlobUrl(res.audioBase64, res.mimeType || "audio/mpeg");
                 cacheRef.current.set(cacheKey, url);

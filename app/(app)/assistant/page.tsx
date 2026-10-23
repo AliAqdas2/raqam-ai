@@ -68,7 +68,14 @@ function AssistantPageInner() {
   const voice = useVoiceInput();
   const tts = useTextToSpeech();
   const { prefs, setPrefs } = useVoicePrefs();
-  const call = useVoiceCall({ language, t, sendMessage, pendingActions });
+  const call = useVoiceCall({
+    language,
+    t,
+    sendMessage,
+    pendingActions,
+    confirmAction,
+    rejectAction,
+  });
   const [callOpen, setCallOpen] = React.useState(
     () => searchParams.get("call") === "1",
   );
@@ -413,8 +420,8 @@ function AssistantPageInner() {
           open={callOpen}
           call={call}
           pendingActions={pendingActions}
-          onConfirm={confirmAction}
-          onReject={rejectAction}
+          onConfirm={call.confirmAction}
+          onReject={call.rejectAction}
           onClose={() => setCallOpen(false)}
         />
 

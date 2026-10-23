@@ -13,6 +13,9 @@
 //   • Write actions still go through the confirmation gate: when a reply
 //     proposes one, the loop pauses until the user taps Confirm or Cancel on
 //     the card. A spoken "yes" never confirms a mutation.
+//
+// The turn-taking itself lives in lib/voice/call-loop.ts (pure, unit-tested);
+// this hook only wires the microphone, TTS and assistant into it.
 
 import * as React from "react";
 import { useVoiceInput, type VoiceInputOptions } from "@/hooks/useVoiceInput";
@@ -24,24 +27,16 @@ import type {
   SendMessageOptions,
 } from "@/hooks/useAssistant";
 import type { TranslationKey } from "@/lib/i18n/ur";
+import {
+  runCallLoop,
+  sayLine,
+  type CallLoopDeps,
+  type CallPhase,
+  type CallTurn,
+  type ConfirmationResult,
+} from "@/lib/voice/call-loop";
 
-export type CallPhase =
-  | "idle" // not started (overlay shows "Start call")
-  | "greeting"
-  | "listening"
-  | "transcribing"
-  | "review" // transcript visible, auto-sends after REVIEW_MS
-  | "thinking"
-  | "speaking"
-  | "confirming" // waiting for the user to tap Confirm / Cancel
-  | "paused" // muted, or nobody spoke — tap the orb to talk
-  | "ended"
-  | "error";
-
-export interface CallTurn {
-  role: "user" | "assistant";
-  text: string;
-}
+export type { CallPhase, CallTurn };
 
 /** Turn-taking for hands-free calls — tuned for natural Urdu speech pauses. */
 export const CALL_AUTO_STOP: NonNullable<VoiceInputOptions["autoStop"]> = {
@@ -54,9 +49,6 @@ export const CALL_AUTO_STOP: NonNullable<VoiceInputOptions["autoStop"]> = {
 /** How long a transcript stays on screen before it is sent automatically. */
 export const REVIEW_MS = 1800;
 
-/** After this many empty turns in a row, stop listening until tapped. */
-const MAX_SILENT_TURNS = 2;
-
 interface UseVoiceCallArgs {
   language: "ur" | "en";
   t: (key: TranslationKey) => string;
@@ -66,6 +58,8 @@ interface UseVoiceCallArgs {
     options?: SendMessageOptions,
   ) => Promise<AssistantReply | null>;
   pendingActions: PendingActionData[];
+  confirmAction: (actionId: string) => Promise<void>;
+  rejectAction: (actionId: string) => Promise<void>;
 }
 
 export function useVoiceCall({
@@ -73,6 +67,8 @@ export function useVoiceCall({
   t,
   sendMessage,
   pendingActions,
+  confirmAction: confirmActionBase,
+  rejectAction: rejectActionBase,
 }: UseVoiceCallArgs) {
   const voice = useVoiceInput(language === "ur" ? "ur-PK" : "en-US", {
     autoStop: CALL_AUTO_STOP,
@@ -88,6 +84,11 @@ export function useVoiceCall({
   // A new run id cancels every in-flight await of the previous loop.
   const runRef = React.useRef(0);
   const reviewDecisionRef = React.useRef<((send: boolean) => void) | null>(null);
+  // Set while the loop waits on the confirmation card; the card's buttons
+  // report their outcome through it.
+  const actionDecisionRef = React.useRef<
+    ((result: ConfirmationResult) => void) | null
+  >(null);
   const mutedRef = React.useRef(muted);
   const pendingRef = React.useRef(pendingActions);
   React.useEffect(() => {
@@ -98,16 +99,6 @@ export function useVoiceCall({
   }, [pendingActions]);
 
   const alive = (run: number) => runRef.current === run;
-
-  const say = React.useCallback(
-    async (run: number, text: string) => {
-      if (!alive(run) || !text) return;
-      setPhase("speaking");
-      setTurns((prev) => [...prev, { role: "assistant", text }]);
-      await tts.speak(text, { preferredLanguage: language });
-    },
-    [tts, language],
-  );
 
   /** Resolves true to send, false to discard; auto-sends after REVIEW_MS. */
   const awaitReview = React.useCallback(
@@ -125,99 +116,96 @@ export function useVoiceCall({
   );
 
   const waitForConfirmation = React.useCallback(
-    (run: number): Promise<"executed" | "rejected" | "failed" | null> =>
+    (run: number): Promise<ConfirmationResult> =>
       new Promise((resolve) => {
-        // The proposed action arrives reactively; give it a moment to appear,
-        // then wait until no action is left in "pending".
+        // The outcome normally arrives from confirmAction / rejectAction
+        // below. The poll only covers the edges: no card ever appeared, or the
+        // card went away without a decision through this call. Resolved
+        // actions drop out of pendingActions (the query lists "pending" only),
+        // so the list alone cannot tell executed from rejected.
         const startedWaiting = Date.now();
         let seenPending = false;
+        let goneAt: number | null = null;
+        const done = (result: ConfirmationResult) => {
+          window.clearInterval(id);
+          actionDecisionRef.current = null;
+          resolve(alive(run) ? result : null);
+        };
+        actionDecisionRef.current = done;
         const id = window.setInterval(() => {
-          if (!alive(run)) {
-            window.clearInterval(id);
-            return resolve(null);
+          if (!alive(run)) return done(null);
+          const pending = pendingRef.current.some((a) => a.status === "pending");
+          if (pending) {
+            seenPending = true;
+            goneAt = null;
+            return;
           }
-          const actions = pendingRef.current;
-          const pending = actions.some((a) => a.status === "pending");
-          if (pending) seenPending = true;
-          if (!pending && (seenPending || Date.now() - startedWaiting > 4000)) {
-            window.clearInterval(id);
-            const last = actions[actions.length - 1];
-            resolve(
-              last && last.status !== "pending" && last.status !== "confirmed"
-                ? last.status
-                : null,
-            );
+          if (!seenPending) {
+            if (Date.now() - startedWaiting > 4000) done(null);
+            return;
           }
+          goneAt ??= Date.now();
+          if (Date.now() - goneAt > 3000) done(null);
         }, 300);
       }),
     [],
   );
 
-  const loop = React.useCallback(
-    async (run: number) => {
-      let silentTurns = 0;
-      while (alive(run)) {
-        if (mutedRef.current) {
-          setPhase("paused");
-          return;
-        }
-
-        // ── Listen ──
-        setPhase("listening");
-        voice.startListening();
-        const outcome = await voice.waitForResult();
-        if (!alive(run)) return;
-
-        if (outcome.error === "mic-denied" || outcome.error === "not-supported") {
-          setPhase("error");
-          return;
-        }
-        const heard = outcome.transcript.trim();
-        if (!heard) {
-          silentTurns++;
-          if (silentTurns >= MAX_SILENT_TURNS) {
-            await say(run, t("call.stillHere"));
-            if (alive(run)) setPhase("paused");
-            return;
-          }
-          continue;
-        }
-        silentTurns = 0;
-
-        // ── Review: show the transcript before it enters the AI pipeline ──
-        setReviewText(heard);
-        setPhase("review");
-        const send = await awaitReview(run);
-        setReviewText("");
-        if (!alive(run)) return;
-        if (!send) continue;
-
-        // ── Think ──
-        setTurns((prev) => [...prev, { role: "user", text: heard }]);
-        setPhase("thinking");
-        const reply = await sendMessage(heard, "voice");
-        if (!alive(run)) return;
-        if (!reply) {
-          await say(run, t("call.error"));
-          continue;
-        }
-
-        // ── Speak ──
-        await say(run, reply.content);
-        if (!alive(run)) return;
-
-        // ── Confirmation gate ──
-        if (reply.proposedAction) {
-          setPhase("confirming");
-          const result = await waitForConfirmation(run);
-          if (!alive(run)) return;
-          if (result === "executed") await say(run, t("call.actionDone"));
-          else if (result === "rejected") await say(run, t("call.actionCancelled"));
-          else if (result === "failed") await say(run, t("call.actionFailed"));
-        }
+  /** The card's Confirm / Cancel, reporting the outcome to the loop. */
+  const confirmAction = React.useCallback(
+    async (actionId: string) => {
+      try {
+        await confirmActionBase(actionId);
+        actionDecisionRef.current?.("executed");
+      } catch (err) {
+        actionDecisionRef.current?.("failed");
+        throw err;
       }
     },
-    [voice, say, awaitReview, sendMessage, waitForConfirmation, t],
+    [confirmActionBase],
+  );
+  const rejectAction = React.useCallback(
+    async (actionId: string) => {
+      await rejectActionBase(actionId);
+      actionDecisionRef.current?.("rejected");
+    },
+    [rejectActionBase],
+  );
+
+  /** Bind the call loop's dependencies to one run of the loop. */
+  const depsFor = React.useCallback(
+    (run: number): CallLoopDeps => ({
+      isAlive: () => alive(run),
+      isMuted: () => mutedRef.current,
+      setPhase: (p) => {
+        if (alive(run)) setPhase(p);
+      },
+      addTurn: (turn) => {
+        if (alive(run)) setTurns((prev) => [...prev, turn]);
+      },
+      listen: () => {
+        voice.startListening();
+        return voice.waitForResult();
+      },
+      review: async (text) => {
+        setReviewText(text);
+        const send = await awaitReview(run);
+        setReviewText("");
+        return send;
+      },
+      send: (text) => sendMessage(text, "voice"),
+      speak: (text) => tts.speak(text, { preferredLanguage: language }),
+      waitForConfirmation: () => waitForConfirmation(run),
+      t,
+    }),
+    [voice, awaitReview, sendMessage, tts, language, waitForConfirmation, t],
+  );
+
+  const loop = React.useCallback(
+    async (run: number) => {
+      await runCallLoop(depsFor(run));
+    },
+    [depsFor],
   );
 
   /** Start the call. Must be called from a tap/click (unlocks audio). */
@@ -229,13 +217,15 @@ export function useVoiceCall({
     mutedRef.current = false;
     setStartedAt(Date.now());
     setPhase("greeting");
-    await say(run, t("call.greeting"));
+    const deps = depsFor(run);
+    await sayLine({ ...deps, setPhase: () => {} }, t("call.greeting"));
     if (alive(run)) void loop(run);
-  }, [tts, say, loop, t]);
+  }, [tts, depsFor, loop, t]);
 
   const end = React.useCallback(() => {
     runRef.current++;
     reviewDecisionRef.current?.(false);
+    actionDecisionRef.current?.(null);
     tts.stop();
     if (voice.isListening) voice.stopListening();
     voice.reset();
@@ -300,8 +290,13 @@ export function useVoiceCall({
     return 0;
   }, [phase, voice, tts]);
 
+  // While the recording is being transcribed the loop is still awaiting
+  // listen(); show that as its own phase instead of "listening".
+  const displayPhase: CallPhase =
+    phase === "listening" && voice.processing ? "transcribing" : phase;
+
   return {
-    phase,
+    phase: displayPhase,
     turns,
     reviewText,
     interimText: voice.interimTranscript,
@@ -316,6 +311,8 @@ export function useVoiceCall({
     toggleMute,
     cancelReview,
     sendReviewNow,
+    confirmAction,
+    rejectAction,
     getLevel,
   };
 }
