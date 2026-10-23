@@ -78,7 +78,9 @@ function AssistantPageInner() {
   );
   const [voiceProvider, setVoiceProvider] =
     React.useState<TranscriptProvider | null>(null);
-  const [sidebarOpen, setSidebarOpen] = React.useState(true);
+  // History starts collapsed so the chat gets the full width; the header
+  // button opens it.
+  const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [historySheetOpen, setHistorySheetOpen] = React.useState(false);
   const [receiptDialogOpen, setReceiptDialogOpen] = React.useState(false);
 
