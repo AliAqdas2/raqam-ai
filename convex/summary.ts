@@ -2,6 +2,7 @@ import { query, type QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { requireUser } from "./auth";
 import type { Id } from "./_generated/dataModel";
+import { buildMonthlyTrend, lastMonthStarts } from "@/lib/finance/trend";
 
 // ─── Arg types ──────────────────────────────────────────────────────────────────
 
@@ -344,3 +345,27 @@ function getFirstOfMonth(): number {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
 }
+
+/**
+ * Income / expense totals for the last `months` months (default 6, max 12),
+ * oldest first — the dashboard's month-over-month trend chart.
+ */
+export const getMonthlyTrend = query({
+  args: { months: v.optional(v.number()) },
+  handler: async (ctx: QueryCtx, args: { months?: number }) => {
+    const user = await requireUser(ctx);
+    const count = Math.max(1, Math.min(12, Math.floor(args.months ?? 6)));
+    const starts = lastMonthStarts(new Date(), count);
+    const last = new Date(starts[starts.length - 1]);
+    const end = new Date(last.getFullYear(), last.getMonth() + 1, 1).getTime();
+
+    const transactions = await ctx.db
+      .query("transactions")
+      .withIndex("by_userId_date", (q) =>
+        q.eq("userId", user._id).gte("date", starts[0]).lt("date", end),
+      )
+      .collect();
+
+    return buildMonthlyTrend(transactions, starts);
+  },
+});

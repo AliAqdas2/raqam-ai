@@ -82,3 +82,34 @@ describe("summary.getIntelligenceData", () => {
     expect(d.currentMonth.daysElapsed).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("summary.getMonthlyTrend", () => {
+  test("returns 6 oldest-first months summed from real rows, caller only", async () => {
+    const t = convexTest(schema, modules);
+    const a = await seedUser(t, SUBJECT_A);
+    const b = await seedUser(t, SUBJECT_B);
+
+    await addTxn(t, a.userId, a.cat("salary"), "income", 90_000, midMonth(0));
+    await addTxn(t, a.userId, a.cat("food"), "expense", 20_000, midMonth(0));
+    await addTxn(t, a.userId, a.cat("food"), "expense", 15_000, midMonth(-2));
+    await addTxn(t, a.userId, a.cat("food"), "expense", 7_000, midMonth(-7)); // outside window
+    await addTxn(t, b.userId, b.cat("food"), "expense", 99_999, midMonth(0)); // other user
+
+    const trend = await t
+      .withIdentity({ subject: SUBJECT_A })
+      .query(api.summary.getMonthlyTrend, {});
+
+    expect(trend).toHaveLength(6);
+    expect(trend.map((p) => p.month)).toEqual(
+      [...trend.map((p) => p.month)].sort((x, y) => x - y),
+    );
+    expect(trend[5]).toMatchObject({ income: 90_000, expenses: 20_000, net: 70_000 });
+    expect(trend[3].expenses).toBe(15_000);
+    expect(trend.reduce((n, p) => n + p.expenses, 0)).toBe(35_000);
+  });
+
+  test("rejects unauthenticated callers", async () => {
+    const t = convexTest(schema, modules);
+    await expect(t.query(api.summary.getMonthlyTrend, {})).rejects.toThrow();
+  });
+});
