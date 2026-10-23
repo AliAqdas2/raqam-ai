@@ -12,6 +12,8 @@
 //
 // Everything in this file except `synthesizeWithAzure` is pure and unit-tested.
 
+import { prepareUrduForSpeech } from "./urdu-speech";
+
 // ─── Types ──────────────────────────────────────────────────────────────────────
 
 export type SpeechLanguage = "ur" | "en";
@@ -51,6 +53,20 @@ export const BROWSER_LOCALES: Record<SpeechLanguage, string> = {
 
 /** Hard cap on characters sent for synthesis (cost + latency bound). */
 export const MAX_TTS_CHARS = 2500;
+
+/** Give up on server synthesis after this long and use the browser voice. */
+export const SYNTHESIS_TIMEOUT_MS = 15_000;
+
+/**
+ * Upper bound on how long speaking `text` may take, end to end (synthesis +
+ * playback). Playback that runs past it is stopped, so a lost `ended` /
+ * `onend` event (a known Chrome speechSynthesis bug) can never stall the
+ * voice call. Normal speech is ~70 ms per character; this allows ~2x that.
+ */
+export function speechWatchdogMs(text: string): number {
+  const chars = Math.min(text.length, MAX_TTS_CHARS);
+  return SYNTHESIS_TIMEOUT_MS + 5_000 + chars * 150;
+}
 
 // ─── Language detection ─────────────────────────────────────────────────────────
 
@@ -114,6 +130,9 @@ export function prepareTextForSpeech(
     .replace(/\s*\n+\s*/g, "\n")
     .replace(/[ \t]{2,}/g, " ")
     .trim();
+
+  // Urdu voice: numbers as Urdu words, English finance terms respelled.
+  if (language === "ur") text = prepareUrduForSpeech(text);
 
   if (text.length > MAX_TTS_CHARS) {
     // Cut at the last sentence end before the cap so the voice doesn't stop

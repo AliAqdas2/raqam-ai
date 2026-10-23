@@ -10,6 +10,8 @@ import {
   prepareTextForSpeech,
   synthesizeSpeechChain,
   synthesizeWithAzure,
+  speechWatchdogMs,
+  SYNTHESIS_TIMEOUT_MS,
 } from "@/lib/ai/tts";
 
 describe("detectSpeechLanguage", () => {
@@ -44,7 +46,7 @@ describe("prepareTextForSpeech", () => {
 
   it("reads currency as روپے in Urdu", () => {
     expect(prepareTextForSpeech("کل خرچ Rs. 4,500 ہے", "ur")).toBe(
-      "کل خرچ 4,500 روپے ہے",
+      "کل خرچ چار ہزار پانچ سو روپے ہے",
     );
     expect(prepareTextForSpeech("₨1,000 and PKR 50", "en")).toBe(
       "1,000 rupees and 50 rupees",
@@ -167,7 +169,7 @@ describe("synthesizeSpeechChain", () => {
       error: null,
     });
     expect(sentSsml).toContain("ur-PK-AsadNeural");
-    expect(sentSsml).toContain("5,000 روپے");
+    expect(sentSsml).toContain("پانچ ہزار روپے");
   });
 
   it("uses the English voice for English text", async () => {
@@ -221,5 +223,20 @@ describe("synthesizeSpeechChain", () => {
     );
     expect(called).toBe(false);
     expect(res.error).toBe("Nothing to speak");
+  });
+});
+
+describe("speechWatchdogMs", () => {
+  it("always leaves room for synthesis plus playback", () => {
+    expect(speechWatchdogMs("")).toBeGreaterThan(SYNTHESIS_TIMEOUT_MS);
+    // ~70 ms/char is normal speech; the watchdog must not cut it off.
+    const text = "ا".repeat(400);
+    expect(speechWatchdogMs(text)).toBeGreaterThan(SYNTHESIS_TIMEOUT_MS + 400 * 70);
+  });
+
+  it("is bounded even for very long text", () => {
+    const capped = speechWatchdogMs("a".repeat(MAX_TTS_CHARS));
+    expect(speechWatchdogMs("a".repeat(MAX_TTS_CHARS * 10))).toBe(capped);
+    expect(capped).toBeLessThan(10 * 60_000);
   });
 });
