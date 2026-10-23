@@ -44,6 +44,13 @@ export const VISION_MODELS: readonly string[] = TEXT_MODELS;
  */
 export const PRIMARY_MODEL = TEXT_MODELS[0];
 
+/**
+ * Model for the input relevance guardrail (lib/ai/guardrail.ts). It runs in
+ * blocking mode before triage on every message, so it uses the fastest
+ * stable model — a yes/no topical check does not need the primary model.
+ */
+export const GUARDRAIL_MODEL = TEXT_MODELS[1];
+
 // ─── Gemini REST API helper with automatic fallback ─────────────────────────────
 
 const GEMINI_BASE_URL =

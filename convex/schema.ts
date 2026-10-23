@@ -213,6 +213,7 @@ export default defineSchema({
         v.literal("analyze"),
         v.literal("recommend"),
         v.literal("act"),
+        v.literal("offTopic"), // blocked by the input relevance guardrail
       ),
     ),
     createdAt: v.number(),

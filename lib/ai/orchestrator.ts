@@ -1,6 +1,6 @@
 // lib/ai/orchestrator.ts — Multi-agent orchestration using the OpenAI Agents SDK.
-// Uses a triage agent with specialist handoffs:
-//   Triage → Education Agent | Analyze Agent | Action Agent
+// Uses a triage agent with specialist handoffs, behind an input guardrail:
+//   Relevance Guardrail ⟶ Triage → Education Agent | Analyze Agent | Action Agent
 //
 // Gemini is driven through the SDK's built-in provider: a real `openai` client
 // pointed at Gemini's OpenAI-compatible endpoint, in chat-completions mode.
@@ -10,12 +10,13 @@
 import OpenAI from "openai";
 import {
   Agent,
+  InputGuardrailTripwireTriggered,
   Runner,
   setDefaultOpenAIClient,
   setOpenAIAPI,
   setTracingDisabled,
 } from "@openai/agents";
-import type { AgentInputItem, RunContext } from "@openai/agents";
+import type { AgentInputItem, Model, RunContext } from "@openai/agents";
 import { buildBasePrompt } from "./prompts/base";
 import { LITERACY_PROMPT } from "./prompts/literacy";
 import { buildAnalysisPrompt } from "./prompts/analysis";
@@ -28,7 +29,15 @@ import {
   ActionExtraction,
   type ActionExtractionResult,
 } from "./action-schemas";
-import { PRIMARY_MODEL } from "./models";
+import { GUARDRAIL_MODEL, PRIMARY_MODEL } from "./models";
+import {
+  buildGuardrailReply,
+  createAgentClassifier,
+  createRelevanceGuardrail,
+  type GuardrailBlock,
+  type GuardrailOutputInfo,
+  type RelevanceClassifier,
+} from "./guardrail";
 
 // ─── Model provider configuration ───────────────────────────────────────────────
 
@@ -39,7 +48,10 @@ setTracingDisabled(true);
 setOpenAIAPI("chat_completions");
 setDefaultOpenAIClient(
   new OpenAI({
-    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY,
+    // The client throws at construction without a key. orchestrate() reports a
+    // missing key explicitly, so a placeholder here keeps the module importable
+    // (offline unit tests inject their own model).
+    apiKey: process.env.GOOGLE_GENERATIVE_AI_API_KEY || "unset",
     baseURL: "https://generativelanguage.googleapis.com/v1beta/openai/",
   }),
 );
@@ -52,16 +64,36 @@ export interface OrchestratorInput {
   conversationHistory: Array<{ role: "user" | "assistant"; content: string }>;
 }
 
+export type OrchestratorIntent =
+  | "educate"
+  | "analyze"
+  | "recommend"
+  | "act"
+  | "offTopic";
+
 export interface OrchestratorResult {
   content: string;
-  intentType: "educate" | "analyze" | "recommend" | "act";
+  intentType: OrchestratorIntent;
   /** Extracted action data when intent = "act" and a valid JSON block was found */
   pendingAction?: {
     actionType: ActionExtractionResult["action"];
     parameters: string;
     userFacingMessage: string;
   };
+  /** Set when the input guardrail blocked the message before triage. */
+  guardrail?: GuardrailBlock;
   error?: string;
+}
+
+/**
+ * Injection points for tests. Production passes nothing: agents use the
+ * Gemini-backed default provider with the models from lib/ai/models.ts.
+ */
+export interface OrchestratorDeps {
+  /** Model for triage + specialists (name or Model instance). */
+  model?: string | Model;
+  /** Replaces the agent-backed relevance classifier. */
+  classifier?: RelevanceClassifier;
 }
 
 /**
@@ -79,11 +111,15 @@ interface AgentContext {
  * Build the multi-agent system for a given run context.
  *
  * Architecture:
+ *   [input guardrail: Relevance Guardrail Agent]
  *   triageAgent  →  educationAgent  (financial literacy questions)
  *                →  analyzeAgent     (data-grounded analysis & recommendations)
  *                →  actionAgent      (transaction extraction — Phase 9)
  */
-function buildAgents(): Agent<AgentContext> {
+function buildAgents(
+  model: string | Model,
+  classify: RelevanceClassifier,
+): Agent<AgentContext> {
   // ── Specialist agents ────────────────────────────────────────────────────
 
   const educationAgent = new Agent<AgentContext>({
@@ -94,7 +130,7 @@ function buildAgents(): Agent<AgentContext> {
       const base = buildBasePrompt(ctx.context.preferredLanguage);
       return `${base}\n\n${LITERACY_PROMPT}`;
     },
-    model: MODEL,
+    model,
   });
 
   const analyzeAgent = new Agent<AgentContext>({
@@ -111,7 +147,7 @@ function buildAgents(): Agent<AgentContext> {
 
       return `${base}\n\nNote: Financial data is not available yet. Tell the user their data may not be loaded and suggest they add some transactions first.`;
     },
-    model: MODEL,
+    model,
   });
 
   const actionAgent = new Agent<AgentContext>({
@@ -125,7 +161,7 @@ function buildAgents(): Agent<AgentContext> {
       const actionPrompt = ACTION_PROMPT.replace("{{CURRENT_DATE}}", today);
       return `${base}\n\n${actionPrompt}`;
     },
-    model: MODEL,
+    model,
   });
 
   // ── Triage agent — routes to the appropriate specialist ──────────────────
@@ -168,7 +204,10 @@ ${langNote}
 Route to the correct agent based on the user's intent.`;
     },
     handoffs: [educationAgent, analyzeAgent, actionAgent],
-    model: MODEL,
+    // Input guardrail: the Relevance Guardrail Agent screens every message
+    // before triage runs (blocking — see lib/ai/guardrail.ts).
+    inputGuardrails: [createRelevanceGuardrail(classify)],
+    model,
   });
 
   return triageAgent;
@@ -264,11 +303,13 @@ export async function orchestrate(
   actionCtx: any,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   apiRef: any,
+  deps: OrchestratorDeps = {},
 ): Promise<OrchestratorResult> {
   try {
     // 1. Gemini is configured at module load via setDefaultOpenAIClient(). Guard
-    //    against a missing key here so the failure is explicit.
-    if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+    //    against a missing key here so the failure is explicit. Injected test
+    //    models don't need it.
+    if (!deps.model && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
       throw new Error(
         "GOOGLE_GENERATIVE_AI_API_KEY not set. Set it in Convex deployment environment variables.",
       );
@@ -291,7 +332,10 @@ export async function orchestrate(
       preferredLanguage: input.preferredLanguage,
       financialContext: financialContextStr,
     };
-    const triageAgent = buildAgents();
+    const triageAgent = buildAgents(
+      deps.model ?? MODEL,
+      deps.classifier ?? createAgentClassifier(deps.model ?? GUARDRAIL_MODEL),
+    );
 
     // 5. Run the multi-agent pipeline. The Runner uses the default provider,
     //    which is the Gemini-backed OpenAI client configured at module load.
@@ -334,6 +378,18 @@ export async function orchestrate(
       pendingAction,
     };
   } catch (err) {
+    // Input guardrail tripped — the message never reached triage. Reply with a
+    // deterministic redirect in the user's language.
+    if (err instanceof InputGuardrailTripwireTriggered) {
+      const info = err.result.output.outputInfo as GuardrailOutputInfo;
+      const category = info?.verdict?.category ?? "off_topic";
+      return {
+        content: buildGuardrailReply(category, input.preferredLanguage),
+        intentType: "offTopic",
+        guardrail: { category, reason: info?.verdict?.reason ?? "" },
+      };
+    }
+
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("AI orchestration error:", err);
 

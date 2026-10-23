@@ -94,6 +94,7 @@ export const saveAssistantMessage = mutation({
         v.literal("analyze"),
         v.literal("recommend"),
         v.literal("act"),
+        v.literal("offTopic"),
       ),
     ),
   },

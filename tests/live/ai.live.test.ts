@@ -12,7 +12,7 @@ import { describe, it, expect } from "vitest";
 
 const KEY = process.env.GOOGLE_GENERATIVE_AI_API_KEY;
 
-type Intent = "educate" | "analyze" | "recommend" | "act";
+type Intent = "educate" | "analyze" | "recommend" | "act" | "offTopic";
 
 const SAMPLES: Array<{ text: string; expect: Intent }> = [
   // ── educate ──
